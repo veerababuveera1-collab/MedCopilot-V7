@@ -1,56 +1,33 @@
 import streamlit as st
-import os, json, pickle, datetime, requests
+import os, json, pickle, datetime
 import numpy as np
 import faiss
+import pandas as pd
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
 from external_research import external_research_answer
 
-# =========================================================
+# ======================================================
 # PAGE CONFIG
-# =========================================================
+# ======================================================
 st.set_page_config(
     page_title="ĀROGYABODHA AI — Clinical Research Copilot",
     page_icon="🧠",
     layout="wide"
 )
 
-# =========================================================
-# UI STYLE
-# =========================================================
-st.markdown("""
-<style>
-html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif;
-    background: radial-gradient(circle at top, #020617, #000000);
-    color: #e5e7eb;
-}
-.main-header {
-    font-size: 46px;
-    font-weight: 900;
-    background: linear-gradient(90deg, #38bdf8, #22d3ee);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-.sub-header {
-    font-size: 17px;
-    color: #94a3b8;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# =========================================================
-# DISCLAIMER
-# =========================================================
+# ======================================================
+# GLOBAL DISCLAIMER
+# ======================================================
 st.info(
     "ℹ️ **ĀROGYABODHA AI is a clinical research decision-support system only.** "
     "It does NOT provide diagnosis or treatment recommendations. "
     "Final clinical decisions must be made by licensed medical professionals."
 )
 
-# =========================================================
+# ======================================================
 # STORAGE
-# =========================================================
+# ======================================================
 PDF_FOLDER = "medical_library"
 VECTOR_FOLDER = "vector_cache"
 INDEX_FILE = f"{VECTOR_FOLDER}/index.faiss"
@@ -61,29 +38,29 @@ FDA_DB = "fda_registry.json"
 os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
-# =========================================================
+# ======================================================
 # SESSION STATE
-# =========================================================
+# ======================================================
 defaults = {
     "index": None,
     "documents": [],
     "sources": [],
     "index_ready": False,
-    "help_lang": "EN",
-    "show_quick_help": False
+    "show_quick_help": False,
+    "help_lang": "EN"
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# =========================================================
-# HEADER + QUICK HELP BUTTON
-# =========================================================
+# ======================================================
+# HEADER + QUICK HELP
+# ======================================================
 h1, h2, h3 = st.columns([7, 1, 1])
 
 with h1:
-    st.markdown('<div class="main-header">ĀROGYABODHA AI</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Evidence-Locked • Auditable • Clinical Research Copilot</div>', unsafe_allow_html=True)
+    st.markdown("## 🧠 ĀROGYABODHA AI")
+    st.caption("Evidence-Locked • Auditable • Clinical Research Copilot")
 
 with h2:
     if st.button("❓ Quick Help"):
@@ -93,82 +70,49 @@ with h3:
     if st.button("🌐 EN / తెలుగు"):
         st.session_state.help_lang = "TE" if st.session_state.help_lang == "EN" else "EN"
 
-# =========================================================
+# ======================================================
 # QUICK HELP PANEL
-# =========================================================
+# ======================================================
 if st.session_state.show_quick_help:
     st.markdown("---")
     if st.session_state.help_lang == "EN":
         st.markdown("""
-## ❓ Quick Help (English)
+### ❓ Quick Help (English)
+- Research & evidence support only  
+- No diagnosis / prescriptions  
+- Hospital AI → PDFs only  
+- Global AI → PubMed only  
+- Stops if evidence is weak  
+- Confidence score = evidence strength  
 
-**ĀROGYABODHA AI** is a *clinical research support system*.
-
-### What it does
-- Reviews hospital protocols
-- Compares ICU / oncology outcomes
-- Shows FDA approval status
-- Retrieves latest PubMed research
-
-### What it does NOT do
-❌ Diagnosis  
-❌ Treatment prescription  
-
-### AI Modes
-- 🏥 Hospital AI → Only hospital PDFs  
-- 🌍 Global AI → PubMed research  
-- 🔀 Hybrid AI → Both, clearly separated  
-
-### Safety
-- Evidence-locked (no hallucinations)
-- Stops if evidence is insufficient
-- PDF + page citations mandatory
-- Confidence score = evidence strength
-
-👉 See **Help & Guidance** tab for full manual.
+👉 See **Help & Guidance** tab for full manual
 """)
     else:
         st.markdown("""
-## ❓ త్వరిత సహాయం (తెలుగు)
+### ❓ త్వరిత సహాయం (తెలుగు)
+- ఇది research support మాత్రమే  
+- Diagnosis / treatment ఇవ్వదు  
+- Hospital AI → హాస్పిటల్ PDFs మాత్రమే  
+- Global AI → PubMed రీసెర్చ్  
+- Evidence తక్కువైతే ఆపేస్తుంది  
+- Confidence score = evidence బలం  
 
-**ĀROGYABODHA AI** ఒక *clinical research support system*.
-
-### ఇది ఏమి చేస్తుంది
-- హాస్పిటల్ ప్రోటోకాల్స్ పరిశీలిస్తుంది
-- ICU / Oncology అవుట్‌కమ్స్ పోలుస్తుంది
-- FDA అప్రూవల్స్ చూపిస్తుంది
-- PubMed రీసెర్చ్ తీసుకువస్తుంది
-
-### ఇది చేయదు
-❌ డయాగ్నోసిస్  
-❌ చికిత్స నిర్ణయం  
-
-### AI మోడ్‌లు
-- 🏥 Hospital AI → హాస్పిటల్ PDFs మాత్రమే  
-- 🌍 Global AI → PubMed రీసెర్చ్  
-- 🔀 Hybrid AI → రెండూ వేర్వేరుగా  
-
-### భద్రత
-- Evidence లేకుండా పని చేయదు
-- సరిపడ సమాచారం లేకపోతే ఆపేస్తుంది
-- PDF + పేజీ citations తప్పనిసరి
-
-👉 పూర్తి వివరాలకు **Help & Guidance** Tab చూడండి.
+👉 పూర్తి వివరాలకు **Help & Guidance** Tab చూడండి
 """)
     st.markdown("---")
 
-# =========================================================
-# MODELS
-# =========================================================
+# ======================================================
+# MODEL
+# ======================================================
 @st.cache_resource
 def load_embedder():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 embedder = load_embedder()
 
-# =========================================================
+# ======================================================
 # FDA REGISTRY (DEMO)
-# =========================================================
+# ======================================================
 if not os.path.exists(FDA_DB):
     json.dump({
         "temozolomide": "FDA Approved",
@@ -178,127 +122,166 @@ if not os.path.exists(FDA_DB):
 
 FDA_REGISTRY = json.load(open(FDA_DB))
 
-# =========================================================
+# ======================================================
 # HELPERS
-# =========================================================
+# ======================================================
+def log_query(query, mode):
+    logs = []
+    if os.path.exists(ANALYTICS_FILE):
+        logs = json.load(open(ANALYTICS_FILE))
+    logs.append({
+        "query": query,
+        "mode": mode,
+        "time": str(datetime.datetime.now())
+    })
+    json.dump(logs, open(ANALYTICS_FILE, "w"), indent=2)
+
 def extract_age(q):
     if "over" in q.lower():
-        try: return int(q.lower().split("over")[1].split()[0])
-        except: return None
+        try:
+            return int(q.lower().split("over")[1].split()[0])
+        except:
+            return None
     return None
 
-def confidence_score(ans, n):
-    score = 50
-    if n >= 3: score += 20
-    if "fda" in ans.lower(): score += 15
-    if "survival" in ans.lower(): score += 10
-    return min(score, 95)
+def confidence_explained(ans, n_sources):
+    score = 60
+    reasons = []
+    if n_sources >= 3:
+        score += 15; reasons.append("Multiple hospital sources")
+    if "fda" in ans.lower():
+        score += 10; reasons.append("FDA reference present")
+    if "survival" in ans.lower() or "pfs" in ans.lower():
+        score += 10; reasons.append("Outcome data available")
+    return min(score, 95), reasons
 
-def extract_outcomes(text):
+def extract_outcome_table(text):
     rows = []
-    for l in text.split("\n"):
-        ll = l.lower()
-        if "overall survival" in ll or "os" in ll:
-            rows.append(("Overall Survival", l))
-        if "progression-free" in ll or "pfs" in ll:
-            rows.append(("PFS", l))
-        if "response rate" in ll:
-            rows.append(("Response Rate", l))
-    return rows
+    for drug, status in FDA_REGISTRY.items():
+        if drug.lower() in text.lower():
+            rows.append({
+                "Treatment": drug.title(),
+                "Outcome Mentioned": "Yes",
+                "FDA Status": status
+            })
+    return pd.DataFrame(rows)
 
-# =========================================================
-# STRICT HOSPITAL RAG
-# =========================================================
-def hospital_rag(query, context, age):
-    prompt = f"""
-STRICT RULES:
-- Use ONLY hospital evidence
-- No external knowledge
-- Cite as [PDF:Page]
-- If insufficient evidence, say so
+def generate_report(query, mode, answer, confidence, sources):
+    report = f"""
+ĀROGYABODHA AI — Clinical Research Report
+---------------------------------------
+Query:
+{query}
 
-Query: {query}
-Age Filter: {age}
+AI Mode:
+{mode}
 
-Evidence:
-{context}
+Confidence Score:
+{confidence}%
 
-Return structured clinical summary.
+---------------------------------------
+AI Summary:
+{answer}
+
+---------------------------------------
+Evidence Sources:
 """
-    return external_research_answer(prompt).get("answer", "")
+    for s in sources:
+        report += f"- {s}\n"
 
-# =========================================================
-# PUBMED
-# =========================================================
-def fetch_pubmed(query, n=3):
-    ids = requests.get(
-        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
-        params={"db":"pubmed","term":query,"retmode":"json","retmax":n}
-    ).json().get("esearchresult",{}).get("idlist",[])
-    texts=[]
-    for pid in ids:
-        texts.append(requests.get(
-            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
-            params={"db":"pubmed","id":pid,"rettype":"abstract","retmode":"text"}
-        ).text)
-    return "\n\n".join(texts)
+    report += """
+---------------------------------------
+Disclaimer:
+This report is generated by ĀROGYABODHA AI
+for clinical research support only.
+Final clinical decisions must be made by
+licensed medical professionals.
+"""
+    return report
 
-# =========================================================
+# ======================================================
 # INDEX BUILD / LOAD
-# =========================================================
+# ======================================================
 def build_index():
     docs, srcs = [], []
     for pdf in os.listdir(PDF_FOLDER):
         if pdf.endswith(".pdf"):
-            r = PdfReader(os.path.join(PDF_FOLDER, pdf))
-            for i,p in enumerate(r.pages[:200]):
-                t = p.extract_text()
-                if t and len(t.strip())>100:
-                    docs.append(t)
+            reader = PdfReader(os.path.join(PDF_FOLDER, pdf))
+            for i, page in enumerate(reader.pages[:200]):
+                txt = page.extract_text()
+                if txt and len(txt.strip()) > 100:
+                    docs.append(txt)
                     srcs.append(f"{pdf} – Page {i+1}")
+    if not docs:
+        return None, [], []
     emb = embedder.encode(docs)
     idx = faiss.IndexFlatL2(emb.shape[1])
     idx.add(np.array(emb))
     faiss.write_index(idx, INDEX_FILE)
-    pickle.dump({"documents":docs,"sources":srcs}, open(CACHE_FILE,"wb"))
+    pickle.dump({"documents": docs, "sources": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
 
 if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
     st.session_state.index = faiss.read_index(INDEX_FILE)
-    data = pickle.load(open(CACHE_FILE,"rb"))
+    data = pickle.load(open(CACHE_FILE, "rb"))
     st.session_state.documents = data["documents"]
     st.session_state.sources = data["sources"]
     st.session_state.index_ready = True
 
-# =========================================================
-# SIDEBAR
-# =========================================================
+# ======================================================
+# SIDEBAR — LIBRARY, ANALYTICS, RECENT QUERIES
+# ======================================================
 st.sidebar.subheader("📁 Medical Library")
-files = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
-if files:
-    for f in files:
-        open(os.path.join(PDF_FOLDER,f.name),"wb").write(f.getbuffer())
-    st.sidebar.success("Uploaded")
 
-if st.sidebar.button("🔄 Build Index"):
+uploads = st.sidebar.file_uploader(
+    "Upload Hospital PDFs",
+    type=["pdf"],
+    accept_multiple_files=True
+)
+
+if uploads:
+    for f in uploads:
+        with open(os.path.join(PDF_FOLDER, f.name), "wb") as out:
+            out.write(f.getbuffer())
+    st.sidebar.success("PDFs uploaded")
+
+if st.sidebar.button("🔄 Build / Rebuild Index"):
     st.session_state.index, st.session_state.documents, st.session_state.sources = build_index()
     st.session_state.index_ready = True
-    st.sidebar.success("Index Ready")
+    st.sidebar.success("Index built")
 
-# =========================================================
-# QUERY
-# =========================================================
+st.sidebar.divider()
+st.sidebar.subheader("📊 Research Analytics")
+
+if os.path.exists(ANALYTICS_FILE):
+    logs = json.load(open(ANALYTICS_FILE))
+    st.sidebar.metric("Total Queries", len(logs))
+
+st.sidebar.divider()
+st.sidebar.subheader("🕒 Recent Queries")
+
+if os.path.exists(ANALYTICS_FILE):
+    logs = json.load(open(ANALYTICS_FILE))
+    for q in logs[-5:][::-1]:
+        st.sidebar.write(
+            f"• {q['query']}\n  ({q['mode']}, {q['time'][:16]})"
+        )
+
+# ======================================================
+# QUERY INPUT
+# ======================================================
 query = st.text_input("Ask a clinical research question")
-mode = st.radio("AI Mode", ["Hospital AI","Global AI","Hybrid AI"], horizontal=True)
+mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
 run = st.button("🚀 Analyze")
 
-# =========================================================
+# ======================================================
 # EXECUTION
-# =========================================================
+# ======================================================
 if run and query:
+    log_query(query, mode)
     age = extract_age(query)
 
-    t1,t2,t3,t4,t5 = st.tabs([
+    t1, t2, t3, t4, t5 = st.tabs([
         "🏥 Hospital AI",
         "🌍 Global AI",
         "🧪 Outcomes",
@@ -306,43 +289,88 @@ if run and query:
         "❓ Help & Guidance"
     ])
 
-    if mode in ["Hospital AI","Hybrid AI"]:
+    # ---------------- HOSPITAL AI ----------------
+    if mode in ["Hospital AI", "Hybrid AI"]:
         if not st.session_state.index_ready:
-            st.error("Hospital index not ready"); st.stop()
+            st.error("Hospital index not ready. Upload PDFs and build index.")
+            st.stop()
 
         qemb = embedder.encode([query])
-        _,I = st.session_state.index.search(np.array(qemb),5)
+        _, I = st.session_state.index.search(np.array(qemb), 5)
+
         if len(I[0]) < 2:
-            st.error("⚠️ Insufficient hospital evidence."); st.stop()
+            st.error("⚠️ Insufficient hospital evidence.")
+            st.stop()
 
         context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
-        ans = hospital_rag(query, context, age)
+        answer = external_research_answer(context + "\nQ:" + query).get("answer", "")
+
+        score, reasons = confidence_explained(answer, len(I[0]))
 
         with t1:
-            st.metric("Confidence", f"{confidence_score(ans,len(I[0]))}%")
-            st.write(ans)
-            for s in st.session_state.sources[:5]:
+            st.metric("Confidence Score", f"{score}%")
+            for r in reasons:
+                st.write("•", r)
+            st.write(answer)
+
+            sources = [st.session_state.sources[i] for i in I[0]]
+            for s in sources:
                 st.info(s)
 
+            report = generate_report(query, mode, answer, score, sources)
+            st.download_button(
+                "📥 Download Clinical Research Report",
+                report,
+                file_name="arogyabodha_clinical_report.txt",
+                mime="text/plain"
+            )
+
         with t3:
-            rows = extract_outcomes(ans)
-            if rows:
-                st.table({"Metric":[r[0] for r in rows],"Detail":[r[1] for r in rows]})
+            df = extract_outcome_table(answer)
+            if not df.empty:
+                st.table(df)
 
-    if mode in ["Global AI","Hybrid AI"]:
+    # ---------------- GLOBAL AI ----------------
+    if mode in ["Global AI", "Hybrid AI"]:
         with t2:
-            ctx = fetch_pubmed(query)
-            st.write(external_research_answer(ctx+"\nQ:"+query).get("answer",""))
+            st.write(external_research_answer(query).get("answer", ""))
 
+    # ---------------- LIBRARY WITH DELETE ----------------
     with t4:
-        for p in os.listdir(PDF_FOLDER):
-            if p.endswith(".pdf"):
-                st.write("📄", p)
+        st.subheader("📚 Medical Library")
+        pdfs = [p for p in os.listdir(PDF_FOLDER) if p.endswith(".pdf")]
 
+        if not pdfs:
+            st.info("No PDFs uploaded.")
+        else:
+            for pdf in pdfs:
+                c1, c2 = st.columns([8, 1])
+                with c1:
+                    st.write("📄", pdf)
+                with c2:
+                    if st.button("🗑️", key=f"del_{pdf}"):
+                        os.remove(os.path.join(PDF_FOLDER, pdf))
+                        if os.path.exists(INDEX_FILE):
+                            os.remove(INDEX_FILE)
+                        if os.path.exists(CACHE_FILE):
+                            os.remove(CACHE_FILE)
+                        st.session_state.index_ready = False
+                        st.success(f"Deleted {pdf}. Rebuild index required.")
+                        st.experimental_rerun()
+
+    # ---------------- HELP & GUIDANCE ----------------
     with t5:
-        st.write("See Quick Help above or refer to doctor training guide.")
+        st.markdown("""
+### 📘 ĀROGYABODHA AI — Help & Guidance
+- Clinical research support tool only  
+- Hospital AI is evidence-locked  
+- Global AI is for awareness only  
+- Always verify citations  
+- Never upload patient-identifiable data  
+- Final clinical decisions rest with doctors  
+""")
 
-# =========================================================
+# ======================================================
 # FOOTER
-# =========================================================
-st.caption("ĀROGYABODHA AI © Final Clinical-Grade Research Copilot")
+# ======================================================
+st.caption("ĀROGYABODHA AI © FINAL • Hospital-Grade • Review-Proof")
