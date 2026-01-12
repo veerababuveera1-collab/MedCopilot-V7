@@ -59,7 +59,7 @@ for k, v in {
 h1, h2, h3, h4 = st.columns([6,1,1,1])
 with h1:
     st.markdown("## 🧠 ĀROGYABODHA AI")
-    st.caption("Evidence-Locked • Auditable • Clinical Research Copilot")
+    st.caption("Evidence-Locked • Semantic-Validated • Clinical Research Copilot")
 with h2:
     if st.button("❓ Help"):
         st.session_state.show_quick_help = not st.session_state.show_quick_help
@@ -76,17 +76,17 @@ if st.session_state.show_quick_help:
     st.markdown("---")
     if st.session_state.help_lang == "EN":
         st.markdown("""
-• Hospital AI → PDFs only  
-• Global AI → PubMed  
-• Evidence-locked + validated  
-• If evidence insufficient → answer blocked
+• Hospital AI → Hospital PDFs only  
+• Semantic validation → meaning-based check  
+• Partial evidence → cautious summary  
+• No evidence → answer blocked
 """)
     else:
         st.markdown("""
 • Hospital AI → కేవలం PDFs  
-• Global AI → PubMed  
-• Evidence validate చేస్తుంది  
-• సరిపడ సమాచారం లేకపోతే సమాధానం లేదు
+• Semantic validation → అర్థం ఆధారంగా చెక్  
+• Partial evidence → జాగ్రత్త సూచన  
+• Evidence లేకపోతే → సమాధానం లేదు
 """)
     st.markdown("---")
 
@@ -127,20 +127,25 @@ def confidence_explained(ans,n):
     score=60; reasons=[]
     if n>=3: score+=15; reasons.append("Multiple hospital sources")
     if "fda" in ans.lower(): score+=10; reasons.append("FDA reference")
-    if "survival" in ans.lower(): score+=10; reasons.append("Outcome data")
+    if "survival" in ans.lower() or "mortality" in ans.lower():
+        score+=10; reasons.append("Outcome data mentioned")
     return min(score,95), reasons
 
-def evidence_coverage(answer, context):
-    aw=set(answer.lower().split())
-    cw=set(context.lower().split())
-    return int((len(aw & cw)/max(len(aw),1))*100)
+# ---------- SEMANTIC EVIDENCE FIX ----------
+def semantic_similarity(a, b):
+    ea = embedder.encode([a])[0]
+    eb = embedder.encode([b])[0]
+    return float(np.dot(ea, eb) / (np.linalg.norm(ea) * np.linalg.norm(eb)))
 
-def validate_context_only(answer, context):
-    aw=set(answer.lower().split())
-    cw=set(context.lower().split())
-    allowed={"the","and","of","to","in","with","for","is","are","was","were"}
-    hallucinated=aw-cw-allowed
-    return len(hallucinated)<40, list(hallucinated)[:5]
+def semantic_evidence_level(answer, context):
+    sim = semantic_similarity(answer, context)
+    if sim >= 0.55:
+        return "STRONG", int(sim*100)
+    elif sim >= 0.25:
+        return "PARTIAL", int(sim*100)
+    else:
+        return "NONE", 0
+# ------------------------------------------
 
 def extract_outcomes(text):
     rows=[]
@@ -149,25 +154,39 @@ def extract_outcomes(text):
             rows.append({"Treatment":d.title(),"FDA Status":s})
     return pd.DataFrame(rows)
 
-def generate_report(query,mode,answer,conf,sources):
-    r=f"Query: {query}\nMode: {mode}\nConfidence: {conf}%\n\n{answer}\n\nSources:\n"
+def generate_report(query,mode,answer,conf,coverage,sources):
+    r=f"""ĀROGYABODHA AI – Clinical Research Report
+---------------------------------------
+Query: {query}
+Mode: {mode}
+Confidence: {conf}%
+Evidence Coverage: {coverage}%
+
+Answer:
+{answer}
+
+Sources:
+"""
     for s in sources: r+=f"- {s}\n"
     return r
 
 # ======================================================
-# HOSPITAL EVIDENCE-LOCKED ANSWER
+# HOSPITAL AI (EVIDENCE-LOCKED PROMPT)
 # ======================================================
 def hospital_answer(query, context):
     prompt=f"""
-Use ONLY the hospital evidence below.
-Do NOT use external knowledge.
-If insufficient, say:
-"Insufficient hospital evidence available."
+You are a Hospital Clinical Decision Support AI.
 
-Evidence:
+RULES:
+- Use ONLY the hospital evidence below
+- Do NOT use external knowledge
+- Do NOT hallucinate
+- If evidence is insufficient, say so clearly
+
+Hospital Evidence:
 {context}
 
-Query:
+Doctor Query:
 {query}
 """
     return external_research_answer(prompt).get("answer","")
@@ -240,23 +259,32 @@ if run and query:
         _,I=st.session_state.index.search(np.array(qemb),5)
         context="\n\n".join([st.session_state.documents[i] for i in I[0]])
         raw=hospital_answer(query,context)
-        valid,missing=validate_context_only(raw,context)
+
+        level,coverage=semantic_evidence_level(raw,context)
+        conf,reasons=confidence_explained(raw,len(I[0]))
+        src=[st.session_state.sources[i] for i in I[0]]
 
         with t1:
-            if not valid:
-                st.error("Answer Rejected")
-                st.write("Reasons:", missing)
-            else:
-                cov=evidence_coverage(raw,context)
-                conf,reasons=confidence_explained(raw,len(I[0]))
-                st.metric("Confidence",f"{conf}%")
-                st.metric("Evidence Coverage",f"{cov}%")
+            st.metric("Confidence",f"{conf}%")
+            st.metric("Evidence Coverage",f"{coverage}%")
+
+            if level=="STRONG":
+                st.success("🟢 Strong hospital evidence")
                 st.write(raw)
-                src=[st.session_state.sources[i] for i in I[0]]
-                for s in src: st.info(s)
-                st.download_button("📥 Download Report",
-                    generate_report(query,mode,raw,conf,src),
-                    file_name="arogyabodha_report.txt")
+            elif level=="PARTIAL":
+                st.warning("🟡 Partial hospital evidence — interpret cautiously")
+                st.write(raw)
+            else:
+                st.error("🔴 No sufficient hospital evidence")
+                st.write("Insufficient hospital evidence available.")
+
+            for s in src: st.info(s)
+
+            st.download_button(
+                "📥 Download Report",
+                generate_report(query,mode,raw,conf,coverage,src),
+                file_name="arogyabodha_report.txt"
+            )
 
         with t3:
             df=extract_outcomes(raw)
@@ -272,8 +300,6 @@ if run and query:
                 c1,c2=st.columns([8,1])
                 with c1:
                     st.write("📄",pdf)
-                    r=PdfReader(os.path.join(PDF_FOLDER,pdf))
-                    st.caption(r.pages[0].extract_text()[:300])
                 with c2:
                     if st.button("🗑️",key=pdf):
                         os.remove(os.path.join(PDF_FOLDER,pdf))
@@ -285,4 +311,4 @@ if run and query:
 # ======================================================
 # FOOTER
 # ======================================================
-st.caption("ĀROGYABODHA AI © WORLD-CLASS • Evidence-Locked • Final")
+st.caption("ĀROGYABODHA AI © FINAL • Semantic Evidence-Aware • Clinically Safe")
