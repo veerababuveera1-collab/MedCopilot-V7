@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 # =========================================================
-# WOW ENTERPRISE UI (GLASS + DARK MODE)
+# ENTERPRISE DARK GLASS UI
 # =========================================================
 st.markdown("""
 <style>
@@ -60,11 +60,6 @@ html, body, [class*="css"] {
     border-radius: 14px;
     padding: 14px 26px;
     font-weight: 700;
-    border: none;
-}
-.stButton>button:hover {
-    transform: translateY(-2px) scale(1.02);
-    box-shadow: 0 15px 40px rgba(37,99,235,0.6);
 }
 input, textarea {
     background-color: rgba(255,255,255,0.08) !important;
@@ -79,6 +74,8 @@ input, textarea {
 # =========================================================
 PDF_FOLDER = "medical_library"
 VECTOR_FOLDER = "vector_cache"
+INDEX_FILE = os.path.join(VECTOR_FOLDER, "index.faiss")
+CACHE_FILE = os.path.join(VECTOR_FOLDER, "cache.pkl")
 ANALYTICS_FILE = "analytics_log.json"
 FDA_DB = "fda_registry.json"
 
@@ -86,16 +83,25 @@ os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
 # =========================================================
+# SESSION STATE (CRITICAL)
+# =========================================================
+for k, v in {
+    "index_ready": False,
+    "index": None,
+    "documents": [],
+    "sources": []
+}.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# =========================================================
 # HEADER
 # =========================================================
 st.markdown('<div class="main-header">ĀROGYABODHA AI</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="sub-header">Clinical Research Command Center • Evidence-Driven • Regulatory-Aware</div>',
-    unsafe_allow_html=True
-)
+st.markdown('<div class="sub-header">Clinical Research Command Center • Evidence • Governance • Trust</div>', unsafe_allow_html=True)
 
 # =========================================================
-# LOAD EMBEDDING MODEL
+# LOAD MODELS
 # =========================================================
 @st.cache_resource
 def load_embedder():
@@ -104,15 +110,14 @@ def load_embedder():
 embedder = load_embedder()
 
 # =========================================================
-# FDA REGISTRY (LIGHTWEIGHT DEMO DB)
+# FDA REGISTRY
 # =========================================================
 if not os.path.exists(FDA_DB):
-    with open(FDA_DB, "w") as f:
-        json.dump({
-            "temozolomide": "FDA Approved",
-            "bevacizumab": "FDA Approved",
-            "car-t": "Experimental / Trial Only"
-        }, f)
+    json.dump({
+        "temozolomide": "FDA Approved",
+        "bevacizumab": "FDA Approved",
+        "car-t": "Experimental / Trial Only"
+    }, open(FDA_DB, "w"))
 
 FDA_REGISTRY = json.load(open(FDA_DB))
 
@@ -120,149 +125,167 @@ FDA_REGISTRY = json.load(open(FDA_DB))
 # ANALYTICS LOGGER
 # =========================================================
 def log_query(query, mode):
-    entry = {
-        "query": query,
-        "mode": mode,
-        "time": str(datetime.datetime.now())
-    }
-    logs = []
-    if os.path.exists(ANALYTICS_FILE):
-        logs = json.load(open(ANALYTICS_FILE))
+    entry = {"query": query, "mode": mode, "time": str(datetime.datetime.now())}
+    logs = json.load(open(ANALYTICS_FILE)) if os.path.exists(ANALYTICS_FILE) else []
     logs.append(entry)
     json.dump(logs, open(ANALYTICS_FILE, "w"), indent=2)
 
 # =========================================================
-# AGE / COHORT EXTRACTION
+# AGE EXTRACTION
 # =========================================================
-def extract_age_filter(query):
-    q = query.lower()
-    if "over" in q:
+def extract_age(query):
+    if "over" in query.lower():
         try:
-            return int(q.split("over")[1].strip().split()[0])
+            return int(query.lower().split("over")[1].split()[0])
         except:
             return None
     return None
 
 # =========================================================
-# TREATMENT + FDA EXTRACTION
+# TREATMENT EXTRACTION
 # =========================================================
 def extract_treatments(text):
-    found = []
-    for drug, status in FDA_REGISTRY.items():
-        if drug.lower() in text.lower():
-            found.append((drug.title(), status))
-    return found
+    return [(d.title(), s) for d, s in FDA_REGISTRY.items() if d in text.lower()]
 
 # =========================================================
-# INDEX LOADING
+# BUILD INDEX
 # =========================================================
-INDEX_FILE = os.path.join(VECTOR_FOLDER, "index.faiss")
-CACHE_FILE = os.path.join(VECTOR_FOLDER, "cache.pkl")
+def build_index():
+    docs, srcs = [], []
+    pdfs = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
+    with st.spinner("🧠 Building medical knowledge index..."):
+        for pdf in pdfs:
+            reader = PdfReader(os.path.join(PDF_FOLDER, pdf))
+            for i, page in enumerate(reader.pages[:200]):
+                text = page.extract_text()
+                if text and len(text.strip()) > 100:
+                    docs.append(text)
+                    srcs.append(f"{pdf} — Page {i+1}")
+    emb = embedder.encode(docs, batch_size=16)
+    index = faiss.IndexFlatL2(emb.shape[1])
+    index.add(np.array(emb))
+    faiss.write_index(index, INDEX_FILE)
+    pickle.dump({"documents": docs, "sources": srcs}, open(CACHE_FILE, "wb"))
+    return index, docs, srcs
 
-@st.cache_resource
-def load_index():
+# =========================================================
+# AUTO LOAD INDEX
+# =========================================================
+if not st.session_state.index_ready:
     if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
-        index = faiss.read_index(INDEX_FILE)
+        idx = faiss.read_index(INDEX_FILE)
         data = pickle.load(open(CACHE_FILE, "rb"))
-        return index, data["documents"], data["sources"]
-    return None, [], []
-
-index, documents, sources = load_index()
+        st.session_state.index = idx
+        st.session_state.documents = data["documents"]
+        st.session_state.sources = data["sources"]
+        st.session_state.index_ready = True
 
 # =========================================================
-# SIDEBAR – ANALYTICS
+# SIDEBAR — ANALYTICS + LIBRARY
 # =========================================================
-st.sidebar.subheader("📊 Research Analytics")
+st.sidebar.subheader("📊 Analytics")
 if os.path.exists(ANALYTICS_FILE):
     logs = json.load(open(ANALYTICS_FILE))
     st.sidebar.metric("Total Queries", len(logs))
-    st.sidebar.write("Recent:")
-    for l in logs[-3:]:
-        st.sidebar.write(f"- {l['query']} ({l['mode']})")
+
+st.sidebar.divider()
+st.sidebar.subheader("📁 Medical Knowledge Base")
+
+uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
+if uploads:
+    for f in uploads:
+        open(os.path.join(PDF_FOLDER, f.name), "wb").write(f.getbuffer())
+    st.sidebar.success("PDFs uploaded")
+
+if st.sidebar.button("🔄 Build / Refresh Index"):
+    idx, docs, srcs = build_index()
+    st.session_state.index = idx
+    st.session_state.documents = docs
+    st.session_state.sources = srcs
+    st.session_state.index_ready = True
+    st.sidebar.success("Index ready")
 
 # =========================================================
 # METRICS STRIP
 # =========================================================
 c1, c2, c3, c4 = st.columns(4)
-for col, title, label in [
-    (c1, "RAG", "Hallucination-Safe AI"),
-    (c2, "FDA", "Regulatory Intelligence"),
-    (c3, "Cohorts", "Age-Aware Evidence"),
-    (c4, "Analytics", "Research Insights")
+for col, t, l in [
+    (c1, "RAG", "Evidence-First"),
+    (c2, "FDA", "Regulatory Aware"),
+    (c3, "Cohort", "Age-Aware"),
+    (c4, "Analytics", "Governance")
 ]:
     with col:
-        st.markdown(f"""
-        <div class="glass-card">
-            <div class="metric-value">{title}</div>
-            <div class="metric-label">{label}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"<div class='glass-card'><div class='metric-value'>{t}</div><div class='metric-label'>{l}</div></div>", unsafe_allow_html=True)
 
 # =========================================================
-# QUERY BAR
+# QUERY
 # =========================================================
-st.markdown("### 🔍 Clinical Research Query")
-query = st.text_input("Ask a clinical research or trial design question")
+query = st.text_input("Ask a clinical research question")
 mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
 run = st.button("🚀 Analyze")
 
 # =========================================================
-# MAIN EXECUTION
+# EXECUTION
 # =========================================================
 if run and query:
     log_query(query, mode)
-    age_filter = extract_age_filter(query)
+    age = extract_age(query)
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "🏥 Hospital Intelligence",
-        "🌍 Global Research",
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🏥 Hospital AI",
+        "🌍 Global AI",
         "🧪 Outcomes & FDA",
-        "📊 Analytics View"
+        "📚 Medical Library",
+        "📊 Analytics"
     ])
 
-    # ---------------- HOSPITAL / HYBRID ----------------
-    if mode in ["Hospital AI", "Hybrid AI"] and index:
-        q_emb = embedder.encode([query])
-        D, I = index.search(np.array(q_emb), 5)
+    if mode in ["Hospital AI", "Hybrid AI"]:
+        if not st.session_state.index_ready:
+            st.error("Hospital index not ready")
+            st.stop()
 
-        context = "\n\n".join([documents[i] for i in I[0]])
+        q_emb = embedder.encode([query])
+        _, I = st.session_state.index.search(np.array(q_emb), 5)
+        context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
 
         prompt = f"""
 You are a clinical research AI.
-
 Question: {query}
-Age Filter: {age_filter}
-
-Tasks:
-- Summarize treatments
-- Compare outcomes if available
-- Mention FDA approval
-- Cite evidence
+Age Filter: {age}
+Use only provided evidence.
+Include FDA status if applicable.
 """
-        answer = external_research_answer(prompt).get("answer", "")
+        ans = external_research_answer(prompt).get("answer", "")
 
         with tab1:
-            st.subheader("🏥 Hospital / Hybrid Intelligence")
-            st.write(answer)
+            st.write(ans)
+            st.subheader("📚 Evidence Sources")
+            for s in st.session_state.sources[:5]:
+                st.info(s)
 
         with tab3:
-            st.subheader("🧾 Regulatory & Treatment Summary")
-            for drug, status in extract_treatments(answer):
-                st.info(f"💊 {drug} — {status}")
+            for d, s in extract_treatments(ans):
+                st.info(f"💊 {d} — {s}")
 
-    # ---------------- GLOBAL AI ----------------
     if mode in ["Global AI", "Hybrid AI"]:
         with tab2:
-            st.subheader("🌍 Global Medical Research")
-            global_ans = external_research_answer(query)
-            st.write(global_ans.get("answer", ""))
+            st.write(external_research_answer(query).get("answer", ""))
 
-    # ---------------- ANALYTICS ----------------
     with tab4:
+        pdfs = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
+        for p in pdfs:
+            col1, col2 = st.columns([8, 2])
+            col1.write(p)
+            if col2.button("🗑️ Delete", key=p):
+                os.remove(os.path.join(PDF_FOLDER, p))
+                st.experimental_rerun()
+
+    with tab5:
         if os.path.exists(ANALYTICS_FILE):
             st.json(json.load(open(ANALYTICS_FILE))[-10:])
 
 # =========================================================
 # FOOTER
 # =========================================================
-st.caption("ĀROGYABODHA AI © Enterprise Clinical Research Copilot — Phase-2 Complete")
+st.caption("ĀROGYABODHA AI © Enterprise Clinical Research Copilot — FINAL")
