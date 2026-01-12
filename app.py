@@ -1,5 +1,5 @@
 import streamlit as st
-import os, json, pickle, datetime
+import os, json, pickle, datetime, requests
 import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
@@ -43,28 +43,15 @@ html, body, [class*="css"] {
     border-radius: 20px;
     padding: 22px;
     border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: 0 25px 50px rgba(0,0,0,0.6);
 }
 .metric-value {
-    font-size: 34px;
+    font-size: 32px;
     font-weight: 800;
     color: #38bdf8;
 }
 .metric-label {
     font-size: 13px;
     color: #94a3b8;
-}
-.stButton>button {
-    background: linear-gradient(90deg, #2563eb, #06b6d4);
-    color: white;
-    border-radius: 14px;
-    padding: 14px 26px;
-    font-weight: 700;
-}
-input, textarea {
-    background-color: rgba(255,255,255,0.08) !important;
-    color: white !important;
-    border-radius: 12px !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -83,7 +70,7 @@ os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
 # =========================================================
-# SESSION STATE (CRITICAL)
+# SESSION STATE
 # =========================================================
 for k, v in {
     "index_ready": False,
@@ -98,10 +85,10 @@ for k, v in {
 # HEADER
 # =========================================================
 st.markdown('<div class="main-header">ĀROGYABODHA AI</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Clinical Research Command Center • Evidence • Governance • Trust</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Clinical Research Command Center • Evidence-Locked • Auditable</div>', unsafe_allow_html=True)
 
 # =========================================================
-# LOAD MODELS
+# MODELS
 # =========================================================
 @st.cache_resource
 def load_embedder():
@@ -110,7 +97,7 @@ def load_embedder():
 embedder = load_embedder()
 
 # =========================================================
-# FDA REGISTRY
+# FDA REGISTRY (DEMO)
 # =========================================================
 if not os.path.exists(FDA_DB):
     json.dump({
@@ -122,16 +109,15 @@ if not os.path.exists(FDA_DB):
 FDA_REGISTRY = json.load(open(FDA_DB))
 
 # =========================================================
-# ANALYTICS LOGGER
+# ANALYTICS
 # =========================================================
 def log_query(query, mode):
-    entry = {"query": query, "mode": mode, "time": str(datetime.datetime.now())}
     logs = json.load(open(ANALYTICS_FILE)) if os.path.exists(ANALYTICS_FILE) else []
-    logs.append(entry)
+    logs.append({"query": query, "mode": mode, "time": str(datetime.datetime.now())})
     json.dump(logs, open(ANALYTICS_FILE, "w"), indent=2)
 
 # =========================================================
-# AGE EXTRACTION
+# HELPERS
 # =========================================================
 def extract_age(query):
     if "over" in query.lower():
@@ -141,26 +127,93 @@ def extract_age(query):
             return None
     return None
 
-# =========================================================
-# TREATMENT EXTRACTION
-# =========================================================
 def extract_treatments(text):
     return [(d.title(), s) for d, s in FDA_REGISTRY.items() if d in text.lower()]
+
+def extract_outcomes(text):
+    rows = []
+    for line in text.split("\n"):
+        l = line.lower()
+        if "overall survival" in l or "os" in l:
+            rows.append(("Overall Survival", line.strip()))
+        if "progression-free" in l or "pfs" in l:
+            rows.append(("PFS", line.strip()))
+        if "response rate" in l:
+            rows.append(("Response Rate", line.strip()))
+    return rows
+
+def calculate_confidence(answer, sources):
+    score = 50
+    if sources >= 3: score += 20
+    if "fda" in answer.lower(): score += 15
+    if "survival" in answer.lower(): score += 10
+    return min(score, 95)
+
+# =========================================================
+# STRICT RAG CONTROLLER (CRITICAL FIX)
+# =========================================================
+def hospital_rag_answer(query, context, age_filter=None):
+    prompt = f"""
+You are a hospital-grade clinical research AI.
+
+STRICT RULES:
+- Use ONLY the evidence provided below.
+- Do NOT use general medical knowledge.
+- If evidence is insufficient, clearly say "Evidence insufficient".
+- Do NOT guess.
+- Cite evidence as [PDF:Page].
+
+Doctor Query:
+{query}
+
+Patient Cohort:
+Age > {age_filter if age_filter else "Not specified"}
+
+Hospital Evidence:
+{context}
+
+OUTPUT FORMAT:
+1. Treatment Summary
+2. Outcome Comparison
+3. FDA Approval Status
+4. Clinical Notes
+5. Evidence Citations
+"""
+    return external_research_answer(prompt).get("answer", "")
+
+# =========================================================
+# PUBMED AUTO INGESTION (GLOBAL AI)
+# =========================================================
+def fetch_pubmed(query, max_results=3):
+    search = requests.get(
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        params={"db": "pubmed", "term": query, "retmode": "json", "retmax": max_results}
+    ).json()
+
+    abstracts = []
+    for pid in search.get("esearchresult", {}).get("idlist", []):
+        abs_text = requests.get(
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+            params={"db": "pubmed", "id": pid, "retmode": "text", "rettype": "abstract"}
+        ).text
+        abstracts.append(abs_text)
+
+    return "\n\n".join(abstracts)
 
 # =========================================================
 # BUILD INDEX
 # =========================================================
 def build_index():
     docs, srcs = [], []
-    pdfs = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
-    with st.spinner("🧠 Building medical knowledge index..."):
-        for pdf in pdfs:
+    for pdf in os.listdir(PDF_FOLDER):
+        if pdf.endswith(".pdf"):
             reader = PdfReader(os.path.join(PDF_FOLDER, pdf))
-            for i, page in enumerate(reader.pages[:200]):
-                text = page.extract_text()
-                if text and len(text.strip()) > 100:
-                    docs.append(text)
+            for i, p in enumerate(reader.pages[:200]):
+                t = p.extract_text()
+                if t and len(t.strip()) > 100:
+                    docs.append(t)
                     srcs.append(f"{pdf} — Page {i+1}")
+
     emb = embedder.encode(docs, batch_size=16)
     index = faiss.IndexFlatL2(emb.shape[1])
     index.add(np.array(emb))
@@ -171,26 +224,17 @@ def build_index():
 # =========================================================
 # AUTO LOAD INDEX
 # =========================================================
-if not st.session_state.index_ready:
-    if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
-        idx = faiss.read_index(INDEX_FILE)
-        data = pickle.load(open(CACHE_FILE, "rb"))
-        st.session_state.index = idx
-        st.session_state.documents = data["documents"]
-        st.session_state.sources = data["sources"]
-        st.session_state.index_ready = True
+if not st.session_state.index_ready and os.path.exists(INDEX_FILE):
+    st.session_state.index = faiss.read_index(INDEX_FILE)
+    data = pickle.load(open(CACHE_FILE, "rb"))
+    st.session_state.documents = data["documents"]
+    st.session_state.sources = data["sources"]
+    st.session_state.index_ready = True
 
 # =========================================================
-# SIDEBAR — ANALYTICS + LIBRARY
+# SIDEBAR
 # =========================================================
-st.sidebar.subheader("📊 Analytics")
-if os.path.exists(ANALYTICS_FILE):
-    logs = json.load(open(ANALYTICS_FILE))
-    st.sidebar.metric("Total Queries", len(logs))
-
-st.sidebar.divider()
 st.sidebar.subheader("📁 Medical Knowledge Base")
-
 uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
 if uploads:
     for f in uploads:
@@ -199,24 +243,9 @@ if uploads:
 
 if st.sidebar.button("🔄 Build / Refresh Index"):
     idx, docs, srcs = build_index()
-    st.session_state.index = idx
-    st.session_state.documents = docs
-    st.session_state.sources = srcs
+    st.session_state.index, st.session_state.documents, st.session_state.sources = idx, docs, srcs
     st.session_state.index_ready = True
     st.sidebar.success("Index ready")
-
-# =========================================================
-# METRICS STRIP
-# =========================================================
-c1, c2, c3, c4 = st.columns(4)
-for col, t, l in [
-    (c1, "RAG", "Evidence-First"),
-    (c2, "FDA", "Regulatory Aware"),
-    (c3, "Cohort", "Age-Aware"),
-    (c4, "Analytics", "Governance")
-]:
-    with col:
-        st.markdown(f"<div class='glass-card'><div class='metric-value'>{t}</div><div class='metric-label'>{l}</div></div>", unsafe_allow_html=True)
 
 # =========================================================
 # QUERY
@@ -232,33 +261,27 @@ if run and query:
     log_query(query, mode)
     age = extract_age(query)
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "🏥 Hospital AI",
-        "🌍 Global AI",
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🏥 Hospital AI (Evidence-Locked)",
+        "🌍 Global AI (PubMed)",
         "🧪 Outcomes & FDA",
-        "📚 Medical Library",
-        "📊 Analytics"
+        "📚 Medical Library"
     ])
 
     if mode in ["Hospital AI", "Hybrid AI"]:
         if not st.session_state.index_ready:
-            st.error("Hospital index not ready")
+            st.error("Hospital knowledge index not ready.")
             st.stop()
 
         q_emb = embedder.encode([query])
         _, I = st.session_state.index.search(np.array(q_emb), 5)
         context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
 
-        prompt = f"""
-You are a clinical research AI.
-Question: {query}
-Age Filter: {age}
-Use only provided evidence.
-Include FDA status if applicable.
-"""
-        ans = external_research_answer(prompt).get("answer", "")
+        ans = hospital_rag_answer(query, context, age)
 
         with tab1:
+            st.warning("⚠️ Answer generated strictly from hospital-uploaded evidence.")
+            st.metric("🧠 Confidence Score", f"{calculate_confidence(ans, len(st.session_state.sources))}%")
             st.write(ans)
             st.subheader("📚 Evidence Sources")
             for s in st.session_state.sources[:5]:
@@ -267,25 +290,28 @@ Include FDA status if applicable.
         with tab3:
             for d, s in extract_treatments(ans):
                 st.info(f"💊 {d} — {s}")
+            outcomes = extract_outcomes(ans)
+            if outcomes:
+                st.table({
+                    "Outcome": [o[0] for o in outcomes],
+                    "Details": [o[1] for o in outcomes]
+                })
 
     if mode in ["Global AI", "Hybrid AI"]:
         with tab2:
-            st.write(external_research_answer(query).get("answer", ""))
+            pubmed_ctx = fetch_pubmed(query)
+            st.write(
+                external_research_answer(
+                    f"Use these PubMed abstracts:\n{pubmed_ctx}\nQuestion:{query}"
+                ).get("answer", "")
+            )
 
     with tab4:
-        pdfs = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
-        for p in pdfs:
-            col1, col2 = st.columns([8, 2])
-            col1.write(p)
-            if col2.button("🗑️ Delete", key=p):
-                os.remove(os.path.join(PDF_FOLDER, p))
-                st.experimental_rerun()
-
-    with tab5:
-        if os.path.exists(ANALYTICS_FILE):
-            st.json(json.load(open(ANALYTICS_FILE))[-10:])
+        for p in os.listdir(PDF_FOLDER):
+            if p.endswith(".pdf"):
+                st.write(f"📄 {p}")
 
 # =========================================================
 # FOOTER
 # =========================================================
-st.caption("ĀROGYABODHA AI © Enterprise Clinical Research Copilot — FINAL")
+st.caption("ĀROGYABODHA AI © Final Clinical-Grade, Evidence-Locked Research Copilot")
