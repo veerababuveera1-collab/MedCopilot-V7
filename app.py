@@ -17,12 +17,12 @@ st.set_page_config(
 )
 
 # ======================================================
-# GLOBAL DISCLAIMER
+# DISCLAIMER
 # ======================================================
 st.info(
-    "ℹ️ **ĀROGYABODHA AI is a clinical research decision-support system only.** "
-    "It does NOT provide diagnosis or treatment recommendations. "
-    "Final clinical decisions must be made by licensed medical professionals."
+    "ℹ️ ĀROGYABODHA AI is a clinical research decision-support system only. "
+    "It does NOT provide diagnosis or treatment. Final decisions must be made "
+    "by licensed medical professionals."
 )
 
 # ======================================================
@@ -41,54 +41,47 @@ os.makedirs(VECTOR_FOLDER, exist_ok=True)
 # ======================================================
 # SESSION STATE
 # ======================================================
-defaults = {
+for k, v in {
     "index": None,
     "documents": [],
     "sources": [],
     "index_ready": False,
     "show_quick_help": False,
     "help_lang": "EN"
-}
-for k, v in defaults.items():
+}.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ======================================================
-# HEADER + QUICK HELP
+# HEADER
 # ======================================================
-h1, h2, h3 = st.columns([7, 1, 1])
-
+h1, h2, h3 = st.columns([7,1,1])
 with h1:
     st.markdown("## 🧠 ĀROGYABODHA AI")
     st.caption("Evidence-Locked • Auditable • Clinical Research Copilot")
-
 with h2:
     if st.button("❓ Quick Help"):
         st.session_state.show_quick_help = not st.session_state.show_quick_help
-
 with h3:
     if st.button("🌐 EN / తెలుగు"):
         st.session_state.help_lang = "TE" if st.session_state.help_lang == "EN" else "EN"
 
 # ======================================================
-# QUICK HELP PANEL
+# QUICK HELP
 # ======================================================
 if st.session_state.show_quick_help:
     st.markdown("---")
     if st.session_state.help_lang == "EN":
         st.markdown("""
-### ❓ Quick Help
-- Research & evidence support only  
-- Hospital AI uses **ONLY hospital PDFs**  
-- Global AI uses PubMed  
-- Evidence-locked, no hallucinations  
+**Hospital AI** → Uses ONLY hospital PDFs  
+**Global AI** → Uses PubMed  
+If evidence is insufficient → system refuses to answer
 """)
     else:
         st.markdown("""
-### ❓ త్వరిత సహాయం
-- ఇది research support మాత్రమే  
-- Hospital AI కేవలం PDFs మాత్రమే వాడుతుంది  
-- Evidence లేకపోతే సమాధానం ఇవ్వదు  
+**Hospital AI** → కేవలం హాస్పిటల్ PDFs మాత్రమే  
+**Global AI** → PubMed రీసెర్చ్  
+Evidence లేకపోతే సమాధానం ఇవ్వదు
 """)
     st.markdown("---")
 
@@ -98,7 +91,6 @@ if st.session_state.show_quick_help:
 @st.cache_resource
 def load_embedder():
     return SentenceTransformer("all-MiniLM-L6-v2")
-
 embedder = load_embedder()
 
 # ======================================================
@@ -110,7 +102,6 @@ if not os.path.exists(FDA_DB):
         "bevacizumab": "FDA Approved",
         "car-t": "Experimental / Trial Only"
     }, open(FDA_DB, "w"))
-
 FDA_REGISTRY = json.load(open(FDA_DB))
 
 # ======================================================
@@ -127,10 +118,10 @@ def log_query(query, mode):
     })
     json.dump(logs, open(ANALYTICS_FILE, "w"), indent=2)
 
-def confidence_explained(ans, n_sources):
+def confidence_explained(ans, n):
     score = 60
     reasons = []
-    if n_sources >= 3:
+    if n >= 3:
         score += 15; reasons.append("Multiple hospital sources")
     if "fda" in ans.lower():
         score += 10; reasons.append("FDA reference present")
@@ -150,41 +141,35 @@ def extract_outcome_table(text):
     return pd.DataFrame(rows)
 
 def generate_report(query, mode, answer, confidence, sources):
-    report = f"""
-ĀROGYABODHA AI — Clinical Research Report
+    rep = f"""
+ĀROGYABODHA AI – Clinical Research Report
 ---------------------------------------
 Query: {query}
-AI Mode: {mode}
-Confidence Score: {confidence}%
+Mode: {mode}
+Confidence: {confidence}%
 
-AI Summary:
+Answer:
 {answer}
 
 Evidence Sources:
 """
     for s in sources:
-        report += f"- {s}\n"
-    return report
+        rep += f"- {s}\n"
+    return rep
 
 # ======================================================
-# 🔒 EVIDENCE-LOCKED HOSPITAL AI (FIX APPLIED)
+# 🔒 EVIDENCE-LOCKED ANSWER
 # ======================================================
 def hospital_evidence_locked_answer(query, context):
     prompt = f"""
 You are a Hospital Clinical Decision Support AI.
 
-STRICT RULES:
+RULES:
 - Use ONLY the hospital evidence below
-- Do NOT use any external or prior medical knowledge
-- Do NOT guess or infer beyond the text
-- If evidence is insufficient, say:
+- Do NOT use any external knowledge
+- Do NOT guess
+- If insufficient evidence, say:
   "Insufficient hospital evidence available."
-
-Answer format:
-- Treatment Summary
-- Outcome Comparison (if available)
-- FDA Approval Status (only if mentioned)
-- Evidence-based Notes
 
 Hospital Evidence:
 {context}
@@ -195,7 +180,17 @@ Doctor Query:
     return external_research_answer(prompt).get("answer", "")
 
 # ======================================================
-# INDEX BUILD / LOAD
+# 🔐 CONTEXT-ONLY VALIDATION (FINAL MISSING FIX)
+# ======================================================
+def validate_context_only(answer, context):
+    aw = set(answer.lower().split())
+    cw = set(context.lower().split())
+    allowed = {"the","and","of","to","in","with","for","is","are","was","were"}
+    hallucinated = aw - cw - allowed
+    return len(hallucinated) < 40
+
+# ======================================================
+# INDEX
 # ======================================================
 def build_index():
     docs, srcs = [], []
@@ -224,7 +219,7 @@ if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
     st.session_state.index_ready = True
 
 # ======================================================
-# SIDEBAR
+# SIDEBAR — MEDICAL LIBRARY + RECENT QUERIES
 # ======================================================
 st.sidebar.subheader("📁 Medical Library")
 uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
@@ -239,6 +234,13 @@ if st.sidebar.button("🔄 Build / Rebuild Index"):
     st.session_state.index_ready = True
     st.sidebar.success("Index built")
 
+st.sidebar.divider()
+st.sidebar.subheader("🕒 Recent Queries")
+if os.path.exists(ANALYTICS_FILE):
+    logs = json.load(open(ANALYTICS_FILE))
+    for q in logs[-5:][::-1]:
+        st.sidebar.write(f"• {q['query']} ({q['mode']})")
+
 # ======================================================
 # QUERY
 # ======================================================
@@ -251,8 +253,7 @@ run = st.button("🚀 Analyze")
 # ======================================================
 if run and query:
     log_query(query, mode)
-
-    t1, t2, t3 = st.tabs(["🏥 Hospital AI", "🌍 Global AI", "🧪 Outcomes"])
+    t1, t2, t3, t4 = st.tabs(["🏥 Hospital AI", "🌍 Global AI", "🧪 Outcomes", "📚 Library"])
 
     if mode in ["Hospital AI", "Hybrid AI"]:
         qemb = embedder.encode([query])
@@ -263,28 +264,27 @@ if run and query:
             st.stop()
 
         context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
+        raw = hospital_evidence_locked_answer(query, context)
 
-        # 🔒 Evidence-locked call
-        answer = hospital_evidence_locked_answer(query, context)
+        if not validate_context_only(raw, context):
+            answer = "Insufficient hospital evidence available."
+        else:
+            answer = raw
 
         score, reasons = confidence_explained(answer, len(I[0]))
+        sources = [st.session_state.sources[i] for i in I[0]]
 
         with t1:
             st.metric("Confidence Score", f"{score}%")
             for r in reasons:
                 st.write("•", r)
             st.write(answer)
-
-            sources = [st.session_state.sources[i] for i in I[0]]
             for s in sources:
                 st.info(s)
-
-            report = generate_report(query, mode, answer, score, sources)
             st.download_button(
                 "📥 Download Clinical Research Report",
-                report,
-                file_name="arogyabodha_clinical_report.txt",
-                mime="text/plain"
+                generate_report(query, mode, answer, score, sources),
+                file_name="arogyabodha_report.txt"
             )
 
         with t3:
@@ -296,7 +296,20 @@ if run and query:
         with t2:
             st.write(external_research_answer(query).get("answer", ""))
 
+    with t4:
+        pdfs = [p for p in os.listdir(PDF_FOLDER) if p.endswith(".pdf")]
+        for pdf in pdfs:
+            c1, c2 = st.columns([8,1])
+            with c1: st.write("📄", pdf)
+            with c2:
+                if st.button("🗑️", key=f"del_{pdf}"):
+                    os.remove(os.path.join(PDF_FOLDER, pdf))
+                    if os.path.exists(INDEX_FILE): os.remove(INDEX_FILE)
+                    if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
+                    st.session_state.index_ready = False
+                    st.experimental_rerun()
+
 # ======================================================
 # FOOTER
 # ======================================================
-st.caption("ĀROGYABODHA AI © FINAL • Evidence-Locked • Review-Proof")
+st.caption("ĀROGYABODHA AI © FINAL • Evidence-Locked • Reviewer-Proof")
