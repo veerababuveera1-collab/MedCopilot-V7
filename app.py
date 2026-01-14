@@ -1,5 +1,5 @@
 import streamlit as st
-import os, json, pickle, datetime
+import os, json, pickle, datetime, re
 import numpy as np
 import faiss
 import pandas as pd
@@ -11,16 +11,16 @@ from external_research import external_research_answer
 # PAGE CONFIG
 # ======================================================
 st.set_page_config(
-    page_title="ĀROGYABODHA AI — Clinical Research Copilot",
+    page_title="ĀROGYABODHA AI — Clinical Intelligence Platform",
     page_icon="🧠",
     layout="wide"
 )
 
 # ======================================================
-# DISCLAIMER (TOP – MANDATORY)
+# DISCLAIMER
 # ======================================================
 st.info(
-    "ℹ️ ĀROGYABODHA AI is a clinical research decision-support system only. "
+    "ℹ️ ĀROGYABODHA AI is a clinical decision-support system only. "
     "It does NOT provide diagnosis or treatment. "
     "Final clinical decisions must be made by licensed medical professionals."
 )
@@ -59,7 +59,7 @@ for k, v in defaults.items():
 c1, c2, c3 = st.columns([6,1,1])
 with c1:
     st.markdown("## 🧠 ĀROGYABODHA AI")
-    st.caption("Evidence-Locked • Semantic-Validated • Clinical Research Copilot")
+    st.caption("Evidence-Locked • Explainable • Hospital-Grade Clinical Intelligence")
 with c2:
     if st.button("❓ Help"):
         st.session_state.show_help = not st.session_state.show_help
@@ -67,52 +67,22 @@ with c3:
     st.session_state.role = st.selectbox("Role", ["Doctor", "Researcher"])
 
 # ======================================================
-# IMPROVED HELP PANEL (ENGLISH ONLY)
+# HELP PANEL
 # ======================================================
 if st.session_state.show_help:
-    st.markdown("---")
     st.markdown("""
 ### ℹ️ How ĀROGYABODHA AI Works
 
-#### 🔍 AI MODES
-**🏥 Hospital AI**
-- Uses ONLY hospital-uploaded PDFs  
-- No internet or external knowledge  
-- If evidence is insufficient → answer is blocked  
+🏥 Hospital AI → Uses ONLY hospital PDFs  
+🌍 Global AI → Uses global medical research  
+🔀 Hybrid AI → Compares both  
 
-**🌍 Global AI**
-- Uses PubMed and global medical research  
-- Suitable for latest trials and new treatments  
+🧪 Lab Report AI → Reads reports and gives clinical interpretation  
 
-**🔀 Hybrid AI**
-- Compares hospital evidence with global research  
-
----
-
-#### 🧠 SAFETY & VALIDATION
-- Semantic validation checks **meaning**, not keywords  
-- Strong evidence → confident summary  
-- Partial evidence → cautious interpretation  
-- No evidence → system refuses to answer  
-
----
-
-#### 👤 ROLE-BASED GUIDANCE
-**👨‍⚕️ Doctor**
-- Short, conservative summaries  
-- Safety-first interpretation  
-
-**🧪 Researcher**
-- Detailed comparisons  
-- Trial outcomes and study-level insights  
-
----
-
-#### 🧪 Example
-Query: *“Glioblastoma treatments for patients over 60”*  
-- Hospital AI → Hospital protocol evidence  
-- Global AI → Latest trials  
-- Hybrid AI → Side-by-side comparison  
+Safety:
+- Evidence validated
+- No hallucination
+- Conservative clinical summaries
 """)
     st.markdown("---")
 
@@ -181,7 +151,7 @@ def extract_outcomes(text):
     return pd.DataFrame(rows)
 
 def generate_report(query, mode, answer, conf, coverage, sources):
-    rep = f"""ĀROGYABODHA AI – Clinical Research Report
+    rep = f"""ĀROGYABODHA AI – Clinical Intelligence Report
 ------------------------------------------------
 Query: {query}
 Mode: {mode}
@@ -198,7 +168,45 @@ Sources:
     return rep
 
 # ======================================================
-# HOSPITAL AI (EVIDENCE-LOCKED)
+# LAB REPORT ENGINE
+# ======================================================
+def extract_lab_values(text):
+    patterns = {
+        "Total Bilirubin": r"Total Bilirubin.*?(\d+\.?\d*)",
+        "Direct Bilirubin": r"Direct Bilirubin.*?(\d+\.?\d*)",
+        "SGPT": r"SGPT.*?(\d+)",
+        "SGOT": r"SGOT.*?(\d+)",
+        "GGT": r"Gamma.*Transferase.*?(\d+)",
+        "Albumin": r"Albumin.*?(\d+\.?\d*)"
+    }
+
+    results = {}
+    for test, pattern in patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            results[test] = match.group(1)
+
+    return results
+
+def interpret_labs(values):
+    summary = []
+
+    if "Total Bilirubin" in values and float(values["Total Bilirubin"]) > 1.2:
+        summary.append("🔴 Elevated bilirubin — suggests jaundice or liver dysfunction.")
+
+    if "SGPT" in values and float(values["SGPT"]) > 50:
+        summary.append("🔴 SGPT is high — indicates liver cell injury.")
+
+    if "SGOT" in values and float(values["SGOT"]) > 50:
+        summary.append("🔴 SGOT is elevated — hepatic inflammation.")
+
+    if "GGT" in values and float(values["GGT"]) > 55:
+        summary.append("🔴 GGT elevated — alcohol/biliary involvement possible.")
+
+    return summary
+
+# ======================================================
+# HOSPITAL AI
 # ======================================================
 def hospital_answer(query, context):
     prompt = f"""
@@ -219,7 +227,7 @@ Doctor Query:
     return external_research_answer(prompt).get("answer", "")
 
 # ======================================================
-# INDEX BUILD / LOAD
+# INDEX
 # ======================================================
 def build_index():
     docs, srcs = [], []
@@ -262,83 +270,106 @@ if st.sidebar.button("🔄 Build Index"):
     st.session_state.index_ready = True
 
 st.sidebar.divider()
-st.sidebar.subheader("🕒 Recent Queries")
-if os.path.exists(ANALYTICS_FILE):
-    logs = json.load(open(ANALYTICS_FILE))
-    for q in logs[-5:][::-1]:
-        st.sidebar.write(f"• {q['query']} ({q['mode']})")
+app_mode = st.sidebar.radio("Select Module", ["Clinical Research Copilot", "Lab Report AI"])
 
 # ======================================================
-# QUERY
+# CLINICAL RESEARCH COPILOT
 # ======================================================
-query = st.text_input("Ask a clinical research question")
-mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
-run = st.button("🚀 Analyze")
+if app_mode == "Clinical Research Copilot":
+
+    query = st.text_input("Ask a clinical research question")
+    mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
+    run = st.button("🚀 Analyze")
+
+    if run and query:
+        log_query(query, mode)
+        t1, t2, t3, t4 = st.tabs(["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"])
+
+        if mode in ["Hospital AI", "Hybrid AI"]:
+            qemb = embedder.encode([query])
+            _, I = st.session_state.index.search(np.array(qemb), 5)
+            context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
+            raw = hospital_answer(query, context)
+
+            level, coverage = semantic_evidence_level(raw, context)
+            conf = confidence_score(raw, len(I[0]))
+            srcs = [st.session_state.sources[i] for i in I[0]]
+
+            with t1:
+                st.metric("Confidence", f"{conf}%")
+                st.metric("Evidence Coverage", f"{coverage}%")
+
+                if level == "STRONG":
+                    st.success(raw)
+                elif level == "PARTIAL":
+                    st.warning(raw)
+                else:
+                    st.error("Insufficient hospital evidence")
+
+                for s in srcs:
+                    st.info(s)
+
+                st.download_button(
+                    "📥 Download Report",
+                    generate_report(query, mode, raw, conf, coverage, srcs),
+                    file_name="arogyabodha_report.txt"
+                )
+
+            with t3:
+                df = extract_outcomes(raw)
+                if not df.empty:
+                    st.table(df)
+
+        if mode in ["Global AI", "Hybrid AI"]:
+            with t2:
+                st.write(external_research_answer(query).get("answer", ""))
 
 # ======================================================
-# EXECUTION
+# LAB REPORT AI
 # ======================================================
-if run and query:
-    log_query(query, mode)
-    t1, t2, t3, t4 = st.tabs(["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"])
+if app_mode == "Lab Report AI":
+    st.markdown("## 🧪 Lab Report Intelligence — ĀROGYABODHA AI")
 
-    if mode in ["Hospital AI", "Hybrid AI"]:
-        qemb = embedder.encode([query])
-        _, I = st.session_state.index.search(np.array(qemb), 5)
-        context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
-        raw = hospital_answer(query, context)
+    lab_file = st.file_uploader("Upload Lab Report (PDF)", type=["pdf"])
 
-        level, coverage = semantic_evidence_level(raw, context)
-        conf = confidence_score(raw, len(I[0]))
-        srcs = [st.session_state.sources[i] for i in I[0]]
+    if lab_file:
+        with open("lab_report.pdf", "wb") as f:
+            f.write(lab_file.getbuffer())
 
-        with t1:
-            st.metric("Confidence", f"{conf}%")
-            st.metric("Evidence Coverage", f"{coverage}%")
+        reader = PdfReader("lab_report.pdf")
+        report_text = ""
+        for page in reader.pages:
+            report_text += page.extract_text() + "\n"
 
-            if level == "STRONG":
-                st.success("🟢 Strong hospital evidence")
-                st.write(raw)
-            elif level == "PARTIAL":
-                st.warning("🟡 Partial hospital evidence — interpret cautiously")
-                st.write(raw)
-            else:
-                st.error("🔴 No sufficient hospital evidence")
-                st.write("Insufficient hospital evidence available.")
+        st.text_area("Extracted Report Text", report_text, height=300)
 
-            for s in srcs:
-                st.info(s)
+        values = extract_lab_values(report_text)
+        st.subheader("🧾 Extracted Lab Parameters")
+        st.json(values)
 
-            st.download_button(
-                "📥 Download Report",
-                generate_report(query, mode, raw, conf, coverage, srcs),
-                file_name="arogyabodha_report.txt"
-            )
+        interpretation = interpret_labs(values)
+        st.subheader("🩺 Clinical Interpretation")
+        for line in interpretation:
+            st.warning(line)
 
-        with t3:
-            df = extract_outcomes(raw)
-            if not df.empty:
-                st.table(df)
+        lab_question = st.text_input("Ask ĀROGYABODHA AI about this report")
 
-    if mode in ["Global AI", "Hybrid AI"]:
-        with t2:
-            st.write(external_research_answer(query).get("answer", ""))
+        if st.button("🧠 Analyze Lab Report"):
+            prompt = f"""
+You are a hospital clinical AI.
 
-    with t4:
-        for pdf in os.listdir(PDF_FOLDER):
-            if pdf.endswith(".pdf"):
-                c1, c2 = st.columns([8,1])
-                with c1:
-                    st.write("📄", pdf)
-                with c2:
-                    if st.button("🗑️", key=pdf):
-                        os.remove(os.path.join(PDF_FOLDER, pdf))
-                        if os.path.exists(INDEX_FILE): os.remove(INDEX_FILE)
-                        if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
-                        st.session_state.index_ready = False
-                        st.experimental_rerun()
+Lab Report:
+{report_text}
+
+Doctor Question:
+{lab_question}
+
+Provide clinical interpretation, risks and next steps.
+"""
+            answer = external_research_answer(prompt).get("answer", "")
+            st.success(answer)
 
 # ======================================================
 # FOOTER
 # ======================================================
-st.caption("ĀROGYABODHA AI © FINAL • Evidence-Locked • Clinically Safe")
+st.caption("ĀROGYABODHA AI © Hospital-Grade Clinical Intelligence Platform")
