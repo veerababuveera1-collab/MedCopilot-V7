@@ -8,19 +8,48 @@ from pypdf import PdfReader
 from external_research import external_research_answer
 
 # ======================================================
-# PAGE CONFIG
+# WOW THEME & UI
 # ======================================================
 st.set_page_config(
-    page_title="ĀROGYABODHA AI — Clinical Intelligence Platform",
+    page_title="ĀROGYABODHA AI — Clinical Intelligence Command Center",
     page_icon="🧠",
     layout="wide"
 )
+
+st.markdown("""
+<style>
+body {
+    background: radial-gradient(circle at top, #020617, #020617);
+    color: #e5e7eb;
+}
+.card {
+    background: rgba(255,255,255,0.04);
+    border-radius: 18px;
+    padding: 20px;
+    box-shadow: 0 0 40px rgba(0,200,255,0.15);
+    margin-bottom: 20px;
+}
+.alert {
+    background: linear-gradient(135deg, #ff004c, #ff6a00);
+    padding: 15px;
+    border-radius: 14px;
+    font-weight: bold;
+}
+.success {
+    background: linear-gradient(135deg, #00ff9c, #00c2ff);
+    padding: 15px;
+    border-radius: 14px;
+    font-weight: bold;
+    color: black;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ======================================================
 # DISCLAIMER
 # ======================================================
 st.info(
-    "ℹ️ ĀROGYABODHA AI is a clinical decision-support system only. "
+    "ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS) only. "
     "It does NOT provide diagnosis or treatment. "
     "Final clinical decisions must be made by licensed medical professionals."
 )
@@ -37,54 +66,6 @@ FDA_DB = "fda_registry.json"
 
 os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
-
-# ======================================================
-# SESSION STATE
-# ======================================================
-defaults = {
-    "index": None,
-    "documents": [],
-    "sources": [],
-    "index_ready": False,
-    "show_help": False,
-    "role": "Doctor"
-}
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
-
-# ======================================================
-# HEADER
-# ======================================================
-c1, c2, c3 = st.columns([6,1,1])
-with c1:
-    st.markdown("## 🧠 ĀROGYABODHA AI")
-    st.caption("Evidence-Locked • Explainable • Hospital-Grade Clinical Intelligence")
-with c2:
-    if st.button("❓ Help"):
-        st.session_state.show_help = not st.session_state.show_help
-with c3:
-    st.session_state.role = st.selectbox("Role", ["Doctor", "Researcher"])
-
-# ======================================================
-# HELP PANEL
-# ======================================================
-if st.session_state.show_help:
-    st.markdown("""
-### ℹ️ How ĀROGYABODHA AI Works
-
-🏥 Hospital AI → Uses ONLY hospital PDFs  
-🌍 Global AI → Uses global medical research  
-🔀 Hybrid AI → Compares both  
-
-🧪 Lab Report AI → Reads reports and gives clinical interpretation  
-
-Safety:
-- Evidence validated
-- No hallucination
-- Conservative clinical summaries
-""")
-    st.markdown("---")
 
 # ======================================================
 # MODEL
@@ -150,25 +131,8 @@ def extract_outcomes(text):
             rows.append({"Treatment": d.title(), "FDA Status": s})
     return pd.DataFrame(rows)
 
-def generate_report(query, mode, answer, conf, coverage, sources):
-    rep = f"""ĀROGYABODHA AI – Clinical Intelligence Report
-------------------------------------------------
-Query: {query}
-Mode: {mode}
-Confidence: {conf}%
-Evidence Coverage: {coverage}%
-
-Answer:
-{answer}
-
-Sources:
-"""
-    for s in sources:
-        rep += f"- {s}\n"
-    return rep
-
 # ======================================================
-# LAB REPORT ENGINE
+# LAB ENGINE
 # ======================================================
 def extract_lab_values(text):
     patterns = {
@@ -176,33 +140,25 @@ def extract_lab_values(text):
         "Direct Bilirubin": r"Direct Bilirubin.*?(\d+\.?\d*)",
         "SGPT": r"SGPT.*?(\d+)",
         "SGOT": r"SGOT.*?(\d+)",
-        "GGT": r"Gamma.*Transferase.*?(\d+)",
-        "Albumin": r"Albumin.*?(\d+\.?\d*)"
+        "GGT": r"Gamma.*Transferase.*?(\d+)"
     }
-
     results = {}
-    for test, pattern in patterns.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            results[test] = match.group(1)
-
+    for k, p in patterns.items():
+        m = re.search(p, text, re.IGNORECASE)
+        if m:
+            results[k] = m.group(1)
     return results
 
 def interpret_labs(values):
     summary = []
-
     if "Total Bilirubin" in values and float(values["Total Bilirubin"]) > 1.2:
-        summary.append("🔴 Elevated bilirubin — suggests jaundice or liver dysfunction.")
-
+        summary.append("🔴 Elevated bilirubin — Jaundice risk")
     if "SGPT" in values and float(values["SGPT"]) > 50:
-        summary.append("🔴 SGPT is high — indicates liver cell injury.")
-
+        summary.append("🔴 SGPT high — Liver injury")
     if "SGOT" in values and float(values["SGOT"]) > 50:
-        summary.append("🔴 SGOT is elevated — hepatic inflammation.")
-
+        summary.append("🔴 SGOT high — Liver inflammation")
     if "GGT" in values and float(values["GGT"]) > 55:
-        summary.append("🔴 GGT elevated — alcohol/biliary involvement possible.")
-
+        summary.append("🔴 GGT high — Alcohol/Biliary involvement")
     return summary
 
 # ======================================================
@@ -210,13 +166,11 @@ def interpret_labs(values):
 # ======================================================
 def hospital_answer(query, context):
     prompt = f"""
-You are a Hospital Clinical Decision Support AI.
+You are a Hospital Clinical AI.
 
-RULES:
-- Use ONLY the hospital evidence below
-- Do NOT use external knowledge
-- Do NOT hallucinate
-- If evidence is insufficient, say so clearly
+Use ONLY hospital evidence.
+No hallucination.
+If evidence insufficient, say so.
 
 Hospital Evidence:
 {context}
@@ -248,17 +202,12 @@ def build_index():
     pickle.dump({"documents": docs, "sources": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
 
-if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
-    st.session_state.index = faiss.read_index(INDEX_FILE)
-    data = pickle.load(open(CACHE_FILE, "rb"))
-    st.session_state.documents = data["documents"]
-    st.session_state.sources = data["sources"]
-    st.session_state.index_ready = True
-
 # ======================================================
 # SIDEBAR
 # ======================================================
+st.sidebar.title("🧠 ĀROGYABODHA AI")
 st.sidebar.subheader("📁 Medical Library")
+
 uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
 if uploads:
     for f in uploads:
@@ -267,23 +216,28 @@ if uploads:
 
 if st.sidebar.button("🔄 Build Index"):
     st.session_state.index, st.session_state.documents, st.session_state.sources = build_index()
-    st.session_state.index_ready = True
+    st.sidebar.success("Index built successfully")
 
 st.sidebar.divider()
-app_mode = st.sidebar.radio("Select Module", ["Clinical Research Copilot", "Lab Report AI"])
+app_mode = st.sidebar.radio("Select Module", ["Clinical Research Copilot", "Lab Report Intelligence"])
+
+# ======================================================
+# HEADER
+# ======================================================
+st.markdown("<div class='card'><h1>🧠 ĀROGYABODHA AI — Clinical Intelligence Command Center</h1></div>", unsafe_allow_html=True)
 
 # ======================================================
 # CLINICAL RESEARCH COPILOT
 # ======================================================
 if app_mode == "Clinical Research Copilot":
 
+    st.markdown("<div class='card'><h2>🔬 Clinical Research Copilot</h2></div>", unsafe_allow_html=True)
+
     query = st.text_input("Ask a clinical research question")
     mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
-    run = st.button("🚀 Analyze")
 
-    if run and query:
+    if st.button("🚀 Analyze Research"):
         log_query(query, mode)
-        t1, t2, t3, t4 = st.tabs(["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"])
 
         if mode in ["Hospital AI", "Hybrid AI"]:
             qemb = embedder.encode([query])
@@ -293,42 +247,20 @@ if app_mode == "Clinical Research Copilot":
 
             level, coverage = semantic_evidence_level(raw, context)
             conf = confidence_score(raw, len(I[0]))
-            srcs = [st.session_state.sources[i] for i in I[0]]
 
-            with t1:
-                st.metric("Confidence", f"{conf}%")
-                st.metric("Evidence Coverage", f"{coverage}%")
-
-                if level == "STRONG":
-                    st.success(raw)
-                elif level == "PARTIAL":
-                    st.warning(raw)
-                else:
-                    st.error("Insufficient hospital evidence")
-
-                for s in srcs:
-                    st.info(s)
-
-                st.download_button(
-                    "📥 Download Report",
-                    generate_report(query, mode, raw, conf, coverage, srcs),
-                    file_name="arogyabodha_report.txt"
-                )
-
-            with t3:
-                df = extract_outcomes(raw)
-                if not df.empty:
-                    st.table(df)
+            st.markdown(f"<div class='success'>Confidence: {conf}% | Evidence Coverage: {coverage}%</div>", unsafe_allow_html=True)
+            st.write(raw)
 
         if mode in ["Global AI", "Hybrid AI"]:
-            with t2:
-                st.write(external_research_answer(query).get("answer", ""))
+            st.markdown("<div class='card'><h3>🌍 Global Medical Research</h3></div>", unsafe_allow_html=True)
+            st.write(external_research_answer(query).get("answer", ""))
 
 # ======================================================
-# LAB REPORT AI
+# LAB REPORT INTELLIGENCE
 # ======================================================
-if app_mode == "Lab Report AI":
-    st.markdown("## 🧪 Lab Report Intelligence — ĀROGYABODHA AI")
+if app_mode == "Lab Report Intelligence":
+
+    st.markdown("<div class='card'><h2>🧪 Lab Report Intelligence</h2></div>", unsafe_allow_html=True)
 
     lab_file = st.file_uploader("Upload Lab Report (PDF)", type=["pdf"])
 
@@ -341,18 +273,18 @@ if app_mode == "Lab Report AI":
         for page in reader.pages:
             report_text += page.extract_text() + "\n"
 
-        st.text_area("Extracted Report Text", report_text, height=300)
-
         values = extract_lab_values(report_text)
-        st.subheader("🧾 Extracted Lab Parameters")
+
+        st.markdown("<div class='card'><h3>🧾 Smart Lab Summary</h3></div>", unsafe_allow_html=True)
         st.json(values)
 
         interpretation = interpret_labs(values)
-        st.subheader("🩺 Clinical Interpretation")
-        for line in interpretation:
-            st.warning(line)
 
-        lab_question = st.text_input("Ask ĀROGYABODHA AI about this report")
+        st.markdown("<div class='card'><h3>🩺 Clinical Interpretation</h3></div>", unsafe_allow_html=True)
+        for line in interpretation:
+            st.markdown(f"<div class='alert'>{line}</div>", unsafe_allow_html=True)
+
+        lab_question = st.text_input("Ask ĀROGYABODHA AI")
 
         if st.button("🧠 Analyze Lab Report"):
             prompt = f"""
@@ -364,12 +296,13 @@ Lab Report:
 Doctor Question:
 {lab_question}
 
-Provide clinical interpretation, risks and next steps.
+Provide diagnosis pattern, risks and next steps.
 """
             answer = external_research_answer(prompt).get("answer", "")
-            st.success(answer)
+            st.markdown("<div class='success'>AI Clinical Opinion</div>", unsafe_allow_html=True)
+            st.write(answer)
 
 # ======================================================
 # FOOTER
 # ======================================================
-st.caption("ĀROGYABODHA AI © Hospital-Grade Clinical Intelligence Platform")
+st.markdown("<center>ĀROGYABODHA AI © Hospital-Grade Clinical Intelligence Platform</center>", unsafe_allow_html=True)
