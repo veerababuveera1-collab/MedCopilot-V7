@@ -2,21 +2,16 @@
 # ĀROGYABODHA AI — Hospital Clinical Intelligence Platform
 # ======================================================
 # Production Build:
-# - Username/Password Login (rerun-safe)
-# - Medical Library (Upload/Delete/Build Index/Status)
-# - FAISS Evidence Engine
-# - 3 AI Modes (Hospital / Global / Hybrid) [MODE ISOLATED]
-# - Dynamic Tabs (Hospital / Global / Outcomes / Library)
-# - Clinical Confidence Engine
-# - Evidence Citation Panel
-# - Explainable AI
-# - OCR fallback (no crash if missing)
-# - Lab Report Intelligence
+# - Secure Login (rerun-safe)
+# - Clinical Research Copilot
+# - Hospital Evidence Engine (FAISS)
+# - 3 AI Modes (Hospital / Global / Hybrid)
+# - Evidence Confidence + Citation Panel
+# - OCR-enabled Lab Report Intelligence
 # - Smart Lab Summary + ICU Alerts
 # - Audit Trail
-# - Governance Layer
-# - Safe AI Wrapper
-# - Sidebar cleaned (NO Library list, NO Help)
+# - Governance Safe AI Wrapper
+# - Clean Sidebar (no library list, no help)
 # ======================================================
 
 import streamlit as st
@@ -28,12 +23,12 @@ from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
 from external_research import external_research_answer
 
-# ---------------- OCR (Safe Optional) ----------------
+# Optional OCR
 OCR_AVAILABLE = True
 try:
     import pytesseract
     from pdf2image import convert_from_path
-except Exception:
+except:
     OCR_AVAILABLE = False
 
 # ======================================================
@@ -67,7 +62,7 @@ AUDIT_LOG = "audit_log.json"
 os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
-# Seed demo users
+# Demo users
 if not os.path.exists(USERS_DB):
     json.dump({
         "doctor1": {"password": "doctor123", "role": "Doctor"},
@@ -106,7 +101,7 @@ def audit(event, meta=None):
     json.dump(rows, open(AUDIT_LOG, "w"), indent=2)
 
 # ======================================================
-# SAFE AI WRAPPER (Governance)
+# SAFE AI WRAPPER
 # ======================================================
 def safe_ai_call(prompt, mode="AI"):
     try:
@@ -118,37 +113,37 @@ def safe_ai_call(prompt, mode="AI"):
         audit("ai_failure", {"mode": mode, "error": str(e)})
         return {
             "status": "down",
-            "answer": (
-                "⚠ AI service temporarily unavailable.\n\n"
-                "Hospital Governance Policy:\n"
-                "• No hallucinated content generated\n"
-                "• No unsafe response\n"
-                "• Please retry later"
-            )
+            "answer": "⚠ AI service temporarily unavailable. Governance block applied."
         }
 
 # ======================================================
-# AUTH (rerun-safe)
+# AUTH
 # ======================================================
 def login_ui():
     st.markdown("## 🏥 ĀROGYABODHA AI Hospital Login")
 
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
+    col1, col2 = st.columns([2,1])
+    with col1:
+        st.markdown("### Secure Clinical Access Portal")
+        st.markdown("✔ Evidence Locked  \n✔ Governance Ready  \n✔ ICU Intelligence  \n✔ Clinical AI")
 
-    if submitted:
-        users = json.load(open(USERS_DB))
-        if username in users and users[username]["password"] == password:
-            st.session_state.logged_in = True
-            st.session_state.username = username
-            st.session_state.role = users[username]["role"]
-            audit("login", {"user": username})
-            st.success("Login successful")
-            st.rerun()
-        else:
-            st.error("❌ Invalid username or password")
+    with col2:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submit = st.form_submit_button("🔐 Login")
+
+        if submit:
+            users = json.load(open(USERS_DB))
+            if username in users and users[username]["password"] == password:
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.session_state.role = users[username]["role"]
+                audit("login", {"user": username})
+                st.success("Login successful")
+                st.rerun()
+            else:
+                st.error("Invalid username or password")
 
 def logout_ui():
     if st.sidebar.button("Logout"):
@@ -201,17 +196,16 @@ if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
     st.session_state.index_ready = True
 
 # ======================================================
-# OCR ENGINE (Safe fallback)
+# OCR
 # ======================================================
 def extract_text_from_pdf(pdf_path):
     text = ""
     try:
         reader = PdfReader(pdf_path)
         for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-    except Exception:
+            if page.extract_text():
+                text += page.extract_text() + "\n"
+    except:
         pass
 
     if len(text.strip()) < 200 and OCR_AVAILABLE:
@@ -219,13 +213,13 @@ def extract_text_from_pdf(pdf_path):
             images = convert_from_path(pdf_path, dpi=300)
             for img in images:
                 text += pytesseract.image_to_string(img) + "\n"
-        except Exception:
+        except:
             pass
 
     return text
 
 # ======================================================
-# CLINICAL CONFIDENCE ENGINE
+# CONFIDENCE ENGINE
 # ======================================================
 def semantic_similarity(a, b):
     ea = embedder.encode([a])[0]
@@ -245,59 +239,44 @@ def confidence_score(answer, n_sources):
     score = 60
     if n_sources >= 3: score += 15
     if "fda" in answer.lower(): score += 10
-    if any(x in answer.lower() for x in ["mortality", "survival", "outcome"]):
-        score += 10
     return min(score, 95)
 
 # ======================================================
-# LAB RULES + PARSER
+# LAB ENGINE
 # ======================================================
 LAB_RULES = {
     "Total Bilirubin": (0.3, 1.2, "mg/dL"),
-    "Direct Bilirubin": (0.0, 0.2, "mg/dL"),
     "SGPT": (0, 50, "U/L"),
-    "SGOT": (0, 50, "U/L"),
-    "GGT": (0, 55, "U/L"),
+    "SGOT": (0, 50, "U/L")
 }
 
 def extract_lab_values(text):
     values = {}
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
-    for line in lines:
-        for test in LAB_RULES:
-            if test.lower() in line.lower():
-                nums = re.findall(r"\b\d+\.?\d*\b", line)
-                if nums:
-                    values[test] = float(nums[-1])
+    for test in LAB_RULES:
+        match = re.search(test + r".*?(\d+\.?\d*)", text, re.IGNORECASE)
+        if match:
+            values[test] = float(match.group(1))
     return values
 
 def generate_lab_summary(values):
     summary, alerts = [], []
     for test, val in values.items():
         low, high, unit = LAB_RULES[test]
-        if val < low:
-            status = "🟡 LOW"
-        elif val > high:
-            status = "🔴 HIGH"
-        else:
-            status = "🟢 NORMAL"
+        status = "🟢 NORMAL" if low <= val <= high else "🔴 HIGH"
         summary.append((test, val, unit, status))
 
         if test == "Total Bilirubin" and val >= 5:
             alerts.append("🚨 Severe Jaundice — ICU evaluation required")
-        if test == "SGPT" and val > 300:
-            alerts.append("🚨 Severe Liver Injury Risk")
 
     return summary, alerts
 
 # ======================================================
-# SIDEBAR (Cleaned)
+# SIDEBAR
 # ======================================================
 st.sidebar.markdown(f"👨‍⚕️ User: **{st.session_state.username}**")
 logout_ui()
 
-st.sidebar.subheader("📁 Medical Library")
-
+st.sidebar.subheader("📁 Hospital Evidence Library")
 uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
 if uploads:
     for f in uploads:
@@ -305,15 +284,12 @@ if uploads:
             out.write(f.getbuffer())
     st.sidebar.success("PDFs uploaded")
 
-if st.sidebar.button("🔄 Build Index"):
+if st.sidebar.button("🔄 Build Evidence Index"):
     st.session_state.index, st.session_state.documents, st.session_state.sources = build_index()
     st.session_state.index_ready = True
     st.sidebar.success("Hospital Evidence Index Built")
 
-if os.path.exists(INDEX_FILE):
-    st.sidebar.markdown("🟢 Index Status: READY")
-else:
-    st.sidebar.markdown("🔴 Index Status: NOT BUILT")
+st.sidebar.markdown("🟢 Index Status: READY" if os.path.exists(INDEX_FILE) else "🔴 Index Status: NOT BUILT")
 
 module = st.sidebar.radio("Select Module", [
     "Clinical Research Copilot",
@@ -339,77 +315,53 @@ if module == "Clinical Research Copilot":
     if st.button("🚀 Analyze") and query:
         audit("clinical_query", {"query": query, "mode": mode})
 
-        if mode == "Hospital AI":
-            tabs = ["🏥 Hospital", "📚 Library"]
-        elif mode == "Global AI":
-            tabs = ["🌍 Global"]
-        else:
-            tabs = ["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"]
+        tabs = ["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"] if mode=="Hybrid AI" else (
+               ["🏥 Hospital"] if mode=="Hospital AI" else ["🌍 Global"])
 
         tab_objs = st.tabs(tabs)
-        tab_map = dict(zip(tabs, tab_objs))
 
-        if "🏥 Hospital" in tab_map:
-            with tab_map["🏥 Hospital"]:
+        if "🏥 Hospital" in tabs:
+            with tab_objs[tabs.index("🏥 Hospital")]:
                 if not st.session_state.index_ready:
-                    st.error("Hospital index not built.")
+                    st.error("Hospital evidence index not built.")
                 else:
                     qemb = embedder.encode([query])
                     _, I = st.session_state.index.search(np.array(qemb), 5)
                     context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
                     sources = [st.session_state.sources[i] for i in I[0]]
 
-                    prompt = f"""
-You are a Hospital Clinical Decision Support AI.
-Use ONLY hospital evidence.
+                    prompt = f"Use only hospital evidence:\n{context}\n\nQuestion:{query}"
+                    resp = safe_ai_call(prompt, "Hospital AI")
 
-Hospital Evidence:
-{context}
+                    if resp["status"]=="ok":
+                        level, coverage = semantic_evidence_level(resp["answer"], context)
+                        confidence = confidence_score(resp["answer"], len(sources))
 
-Doctor Question:
-{query}
-"""
-                    resp = safe_ai_call(prompt, mode="Hospital AI")
-
-                    if resp["status"] != "ok":
-                        st.error(resp["answer"])
-                    else:
-                        answer = resp["answer"]
-                        level, coverage = semantic_evidence_level(answer, context)
-                        confidence = confidence_score(answer, len(sources))
-
-                        c1, c2, c3 = st.columns(3)
+                        c1,c2,c3 = st.columns(3)
                         c1.metric("Confidence", f"{confidence}%")
-                        c2.metric("Evidence Coverage", f"{coverage}%")
-                        c3.metric("Evidence Level", level)
+                        c2.metric("Coverage", f"{coverage}%")
+                        c3.metric("Evidence", level)
 
-                        if level == "INSUFFICIENT":
-                            st.error("❌ Blocked — Insufficient hospital evidence")
-                        else:
-                            st.success("Hospital Evidence Answer")
-                            st.write(answer)
+                        st.success("Hospital Evidence Answer")
+                        st.write(resp["answer"])
 
-                            st.markdown("### 📑 Evidence Sources")
-                            for s in sources:
-                                st.info(s)
+                        st.markdown("### 📑 Evidence Sources")
+                        for s in sources:
+                            st.info(s)
+                    else:
+                        st.error(resp["answer"])
 
-        if "🌍 Global" in tab_map:
-            with tab_map["🌍 Global"]:
-                resp = safe_ai_call(query, mode="Global AI")
+        if "🌍 Global" in tabs:
+            with tab_objs[tabs.index("🌍 Global")]:
+                resp = safe_ai_call(query, "Global AI")
                 st.write(resp["answer"])
 
-        if "🧪 Outcomes" in tab_map:
-            with tab_map["🧪 Outcomes"]:
+        if "🧪 Outcomes" in tabs:
+            with tab_objs[tabs.index("🧪 Outcomes")]:
                 if "fda" in resp["answer"].lower():
                     st.success("FDA-approved therapy detected")
                 else:
-                    st.info("No FDA outcome keyword detected.")
-
-        if "📚 Library" in tab_map:
-            with tab_map["📚 Library"]:
-                for pdf in os.listdir(PDF_FOLDER):
-                    if pdf.endswith(".pdf"):
-                        st.write("📄", pdf)
+                    st.info("No FDA outcome keyword detected")
 
 # ======================================================
 # LAB REPORT INTELLIGENCE
@@ -418,7 +370,6 @@ if module == "Lab Report Intelligence":
     st.subheader("🧪 Lab Report Intelligence")
 
     lab_file = st.file_uploader("Upload Lab Report (PDF)", type=["pdf"])
-
     if lab_file:
         with open("lab_report.pdf", "wb") as f:
             f.write(lab_file.getbuffer())
@@ -428,11 +379,8 @@ if module == "Lab Report Intelligence":
         summary, alerts = generate_lab_summary(values)
 
         st.markdown("### 🧾 Smart Lab Summary")
-        if not summary:
-            st.warning("Unable to auto-detect RESULT values.")
-        else:
-            for t,v,u,s in summary:
-                st.write(f"{t}: {v} {u} — {s}")
+        for t,v,u,s in summary:
+            st.write(f"{t}: {v} {u} — {s}")
 
         if alerts:
             st.markdown("### 🚨 ICU Alerts")
@@ -447,8 +395,6 @@ if module == "Audit Trail":
     if os.path.exists(AUDIT_LOG):
         df = pd.DataFrame(json.load(open(AUDIT_LOG)))
         st.dataframe(df, use_container_width=True)
-    else:
-        st.info("No audit logs yet.")
 
 # ======================================================
 # FOOTER
