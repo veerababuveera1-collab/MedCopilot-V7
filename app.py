@@ -1,15 +1,5 @@
 # ======================================================
-# ĀROGYABODHA AI — Hospital Clinical Intelligence Platform (FINAL)
-# ======================================================
-# Features:
-# - Doctor Login & Audit Trail
-# - Clinical Research Copilot (Hospital / Global / Hybrid)
-# - Medical Library + FAISS Search
-# - Lab Report Intelligence (Hospital-grade RESULT parser)
-# - Smart Lab Summary (🟢🟡🔴) + ICU Alerts (🚨)
-# - Clinical Sync Layer (AI narrative matches summary)
-# - Doctor PDF Summary Generator
-# - ICU Command Center Dashboard
+# ĀROGYABODHA AI — Hospital Clinical Intelligence Platform
 # ======================================================
 
 import streamlit as st
@@ -31,13 +21,26 @@ st.set_page_config(
 )
 
 # ======================================================
+# THEME
+# ======================================================
+st.markdown("""
+<style>
+body { background: #0b1220; color: #e5e7eb; }
+.card { background: rgba(255,255,255,0.05); border-radius: 14px; padding: 16px; margin-bottom: 12px; }
+.badge { padding: 6px 10px; border-radius: 999px; font-weight: 600; }
+.ok { background: #00c2a8; color: #041b16; }
+.warn { background: #ffd166; color: #3b2f00; }
+.danger { background: #ef476f; }
+.small { opacity: .8; font-size: .9rem; }
+</style>
+""", unsafe_allow_html=True)
+
+# ======================================================
 # DISCLAIMER
 # ======================================================
-st.info(
-    "ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS) only. "
-    "It does NOT provide diagnosis or treatment. "
-    "Final clinical decisions must be made by licensed medical professionals."
-)
+st.info("ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS) only. "
+        "It does NOT provide diagnosis or treatment. "
+        "Final clinical decisions must be made by licensed medical professionals.")
 
 # ======================================================
 # STORAGE
@@ -54,45 +57,38 @@ os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 os.makedirs(REPORTS_FOLDER, exist_ok=True)
 
-# Seed users
+# ======================================================
+# USERS
+# ======================================================
 if not os.path.exists(USERS_DB):
     json.dump({
-        "doctor1": {"password": "doctor123", "role": "Doctor"},
-        "researcher1": {"password": "research123", "role": "Researcher"}
+        "doctor1": {"password": "doctor123", "role": "Doctor"}
     }, open(USERS_DB, "w"), indent=2)
 
 # ======================================================
-# SESSION STATE
+# SESSION
 # ======================================================
-defaults = {
-    "logged_in": False,
-    "username": None,
-    "role": None,
-    "index": None,
-    "documents": [],
-    "sources": [],
-    "index_ready": False,
-}
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
 
 # ======================================================
-# AUTH SYSTEM
+# AUDIT
 # ======================================================
 def audit(event, meta=None):
-    rows = []
+    logs = []
     if os.path.exists(AUDIT_LOG):
-        rows = json.load(open(AUDIT_LOG))
-    rows.append({
+        logs = json.load(open(AUDIT_LOG))
+    logs.append({
         "time": str(datetime.datetime.now()),
         "user": st.session_state.get("username"),
         "event": event,
         "meta": meta or {}
     })
-    json.dump(rows, open(AUDIT_LOG, "w"), indent=2)
+    json.dump(logs, open(AUDIT_LOG, "w"), indent=2)
 
-
+# ======================================================
+# AUTH
+# ======================================================
 def login_ui():
     st.markdown("### 🔐 Doctor Login")
     u = st.text_input("Username")
@@ -102,24 +98,26 @@ def login_ui():
         if u in users and users[u]["password"] == p:
             st.session_state.logged_in = True
             st.session_state.username = u
-            st.session_state.role = users[u]["role"]
             audit("login")
             st.success("Login successful")
             st.rerun()
         else:
             st.error("Invalid credentials")
 
-
-def logout_ui():
-    if st.sidebar.button("Logout"):
-        audit("logout")
-        for k in ["logged_in", "username", "role"]:
-            st.session_state[k] = None
-        st.session_state.logged_in = False
-        st.rerun()
+if not st.session_state.logged_in:
+    login_ui()
+    st.stop()
 
 # ======================================================
-# MODEL (Research Copilot)
+# LOGOUT
+# ======================================================
+if st.sidebar.button("Logout"):
+    audit("logout")
+    st.session_state.logged_in = False
+    st.rerun()
+
+# ======================================================
+# MODEL
 # ======================================================
 @st.cache_resource
 def load_embedder():
@@ -128,14 +126,14 @@ def load_embedder():
 embedder = load_embedder()
 
 # ======================================================
-# FAISS INDEX
+# FAISS
 # ======================================================
 def build_index():
     docs, srcs = [], []
     for pdf in os.listdir(PDF_FOLDER):
         if pdf.endswith(".pdf"):
             reader = PdfReader(os.path.join(PDF_FOLDER, pdf))
-            for i, p in enumerate(reader.pages[:200]):
+            for i, p in enumerate(reader.pages[:100]):
                 t = p.extract_text()
                 if t and len(t) > 100:
                     docs.append(t)
@@ -149,96 +147,64 @@ def build_index():
     pickle.dump({"documents": docs, "sources": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
 
-if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
-    st.session_state.index = faiss.read_index(INDEX_FILE)
+if os.path.exists(INDEX_FILE):
+    index = faiss.read_index(INDEX_FILE)
     data = pickle.load(open(CACHE_FILE, "rb"))
-    st.session_state.documents = data["documents"]
-    st.session_state.sources = data["sources"]
-    st.session_state.index_ready = True
-
-# ======================================================
-# LAB RULES
-# ======================================================
-LAB_RULES = {
-    "Total Bilirubin": (0.3, 1.2, "mg/dL"),
-    "Direct Bilirubin": (0.0, 0.2, "mg/dL"),
-    "SGPT": (0, 50, "U/L"),
-    "SGOT": (0, 50, "U/L"),
-    "Creatinine": (0.7, 1.3, "mg/dL"),
-    "Hemoglobin": (13, 17, "g/dL"),
-    "WBC": (4000, 10000, "/cumm"),
-    "Platelets": (150000, 410000, "/cumm"),
-}
-
-# ======================================================
-# LAB RESULT PARSER
-# ======================================================
-def extract_lab_values_from_pdf(text: str):
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
-    found = {}
-    for i, line in enumerate(lines):
-        for test in LAB_RULES:
-            if test.lower() in line.lower():
-                nums = re.findall(r"\b\d+\.?\d*\b", line)
-                if nums:
-                    found[test] = float(nums[-1])
-    return found
-
-# ======================================================
-# LAB DECISION LOGIC
-# ======================================================
-def generate_lab_summary(values):
-    summary = []
-    alerts = []
-    for test, val in values.items():
-        low, high, unit = LAB_RULES[test]
-        if val < low:
-            status = "🟡 LOW"
-        elif val > high:
-            status = "🔴 HIGH"
-        else:
-            status = "🟢 NORMAL"
-        summary.append((test, val, unit, status))
-
-        if test == "Creatinine" and val > 3:
-            alerts.append("🚨 Acute Renal Failure Risk")
-        if test == "Hemoglobin" and val < 7:
-            alerts.append("🚨 Severe Anemia")
-        if test == "WBC" and val > 20000:
-            alerts.append("🚨 Sepsis Risk")
-
-    return summary, alerts
+    documents = data["documents"]
+    sources = data["sources"]
+else:
+    index, documents, sources = None, [], []
 
 # ======================================================
 # SIDEBAR
 # ======================================================
-st.sidebar.title("🧠 ĀROGYABODHA AI")
+st.sidebar.markdown("## 🧠 ĀROGYABODHA AI")
+st.sidebar.markdown(f"**User:** {st.session_state.username}")
 
-if not st.session_state.logged_in:
-    login_ui()
-    st.stop()
-
-st.sidebar.write(f"User: {st.session_state.username} ({st.session_state.role})")
-logout_ui()
-
-st.sidebar.divider()
-st.sidebar.subheader("📁 Medical Library")
-
+# Upload
 uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
 if uploads:
     for f in uploads:
         open(os.path.join(PDF_FOLDER, f.name), "wb").write(f.getbuffer())
     st.sidebar.success("PDFs uploaded")
 
-if st.sidebar.button("🔄 Build Index"):
-    st.session_state.index, st.session_state.documents, st.session_state.sources = build_index()
-    st.session_state.index_ready = True
-    st.sidebar.success("Index built successfully")
+if st.sidebar.button("Build Index"):
+    index, documents, sources = build_index()
+    st.sidebar.success("Index built")
 
-st.sidebar.divider()
+# Viewer + Delete
+st.sidebar.markdown("### 📁 Medical Library")
+for pdf in os.listdir(PDF_FOLDER):
+    c1, c2 = st.sidebar.columns([8,1])
+    with c1:
+        st.write("📄", pdf)
+    with c2:
+        if st.button("🗑️", key=pdf):
+            os.remove(os.path.join(PDF_FOLDER, pdf))
+            if os.path.exists(INDEX_FILE): os.remove(INDEX_FILE)
+            if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
+            audit("delete_pdf", {"file": pdf})
+            st.rerun()
+
+# Help Panel
+with st.sidebar.expander("❓ Help"):
+    st.write("""
+**AI Modes**
+- Hospital AI → Only hospital PDFs
+- Global AI → Global research
+- Hybrid AI → Both
+
+**Modules**
+- Research Copilot
+- Lab Intelligence
+- ICU Command Center
+- Audit Trail
+""")
+
 module = st.sidebar.radio("Select Module", [
     "Clinical Research Copilot",
     "Lab Report Intelligence",
+    "ICU Command Center",
     "Audit Trail"
 ])
 
@@ -246,107 +212,83 @@ module = st.sidebar.radio("Select Module", [
 # HEADER
 # ======================================================
 st.markdown("## 🧠 ĀROGYABODHA AI — Hospital Clinical Intelligence Platform")
-st.caption("Hospital-grade • Evidence-locked • Doctor-safe")
+st.markdown("<div class='small'>Hospital-grade • Evidence-locked • Doctor-safe</div>", unsafe_allow_html=True)
 
 # ======================================================
-# CLINICAL RESEARCH COPILOT (3 MODES)
+# CLINICAL RESEARCH COPILOT
 # ======================================================
 if module == "Clinical Research Copilot":
-    st.subheader("🔬 Clinical Research Copilot")
-
+    st.markdown("### 🔬 Clinical Research Copilot")
     query = st.text_input("Ask a clinical research question")
     mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
 
-    if st.button("🚀 Analyze"):
+    if st.button("Analyze"):
         audit("research_query", {"query": query, "mode": mode})
 
-        if mode in ["Hospital AI", "Hybrid AI"]:
-            if not st.session_state.index_ready:
-                st.error("Hospital Library not indexed. Upload PDFs and build index first.")
-            else:
-                qemb = embedder.encode([query])
-                _, I = st.session_state.index.search(np.array(qemb), 5)
-                context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
-
-                hospital_prompt = f"""
-You are a Hospital Clinical Decision Support AI.
-Use ONLY hospital evidence. Do NOT hallucinate.
+        if mode in ["Hospital AI","Hybrid AI"] and index:
+            qemb = embedder.encode([query])
+            _, I = index.search(np.array(qemb), 5)
+            context = "\n\n".join([documents[i] for i in I[0]])
+            prompt = f"""
+You are a Hospital Clinical AI.
+Use only hospital evidence.
 
 Hospital Evidence:
 {context}
 
-Doctor Query:
+Query:
 {query}
 """
-                hospital_answer = external_research_answer(hospital_prompt).get("answer", "")
-                st.markdown("### 🏥 Hospital AI")
-                st.write(hospital_answer)
+            st.subheader("🏥 Hospital AI")
+            st.write(external_research_answer(prompt).get("answer",""))
 
-        if mode in ["Global AI", "Hybrid AI"]:
-            global_answer = external_research_answer(query).get("answer", "")
-            st.markdown("### 🌍 Global AI")
-            st.write(global_answer)
+        if mode in ["Global AI","Hybrid AI"]:
+            st.subheader("🌍 Global AI")
+            st.write(external_research_answer(query).get("answer",""))
 
 # ======================================================
 # LAB REPORT INTELLIGENCE
 # ======================================================
 if module == "Lab Report Intelligence":
-    st.subheader("🧪 Lab Report Intelligence")
-    lab_file = st.file_uploader("Upload Lab Report (PDF)", type=["pdf"])
-    patient_name = st.text_input("Patient Name")
+    st.markdown("### 🧪 Lab Report Intelligence")
+    lab_file = st.file_uploader("Upload Lab Report PDF", type=["pdf"])
 
     if lab_file:
-        with open("lab_report.pdf", "wb") as f:
-            f.write(lab_file.getbuffer())
-
-        reader = PdfReader("lab_report.pdf")
-        report_text = ""
+        reader = PdfReader(lab_file)
+        text = ""
         for p in reader.pages:
-            report_text += (p.extract_text() or "") + "\n"
+            text += (p.extract_text() or "") + "\n"
 
-        values = extract_lab_values_from_pdf(report_text)
-        summary, alerts = generate_lab_summary(values)
-
-        st.markdown("### 🧾 Smart Lab Summary")
-        for t, v, u, s in summary:
-            st.write(f"{t}: {v} {u} — {s}")
-
-        if alerts:
-            st.markdown("### 🚨 ICU Alerts")
-            for a in alerts:
-                st.error(a)
-
-        lab_question = st.text_input("Ask ĀROGYABODHA AI about this report")
-
-        if st.button("Analyze Lab Report"):
-            audit("lab_analyze", {"patient": patient_name})
-            prompt = f"""
+        st.subheader("🧠 AI Clinical Opinion")
+        prompt = f"""
 You are a hospital clinical AI.
 
 Lab Report:
-{report_text}
+{text}
 
-Doctor Question:
-{lab_question}
-
-Provide diagnosis pattern, risks and next steps.
+Provide diagnosis pattern, risks, and next steps.
 """
-            ai_text = external_research_answer(prompt).get("answer", "")
-            st.markdown("### 🧠 AI Clinical Opinion")
-            st.write(ai_text)
+        st.write(external_research_answer(prompt).get("answer",""))
+
+# ======================================================
+# ICU COMMAND CENTER
+# ======================================================
+if module == "ICU Command Center":
+    st.markdown("### 🚨 ICU Command Center")
+    st.write("Monitoring lab alerts and doctor summaries.")
 
 # ======================================================
 # AUDIT TRAIL
 # ======================================================
 if module == "Audit Trail":
-    st.subheader("🕒 Audit Trail")
+    st.markdown("### 🕒 Audit Trail")
     if os.path.exists(AUDIT_LOG):
         df = pd.DataFrame(json.load(open(AUDIT_LOG)))
         st.dataframe(df, use_container_width=True)
     else:
-        st.info("No audit logs yet.")
+        st.info("No logs yet.")
 
 # ======================================================
 # FOOTER
 # ======================================================
-st.caption("ĀROGYABODHA AI © Hospital-Grade Clinical Intelligence Platform")
+st.caption("ĀROGYABODHA AI © Hospital Clinical Intelligence Platform")
