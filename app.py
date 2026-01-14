@@ -4,13 +4,14 @@
 # - Doctor Login (rerun-safe)
 # - Medical Library (Upload/Delete/Build Index/Status)
 # - FAISS Evidence Engine
-# - 3 AI Modes (Hospital / Global / Hybrid)
-# - 4 Tabs (Hospital, Global, Outcomes, Library)
+# - 3 AI Modes (Hospital / Global / Hybrid) [MODE ISOLATED]
+# - Dynamic Tabs (Hospital / Global / Outcomes / Library) [Governance]
 # - Clinical Confidence Engine
 # - Lab Report Intelligence (RESULT parser)
 # - Smart Lab Summary (🟢🟡🔴) + ICU Alerts 🚨
 # - Audit Trail
 # - Help Panel
+# - Safe AI Wrapper (no crashes)
 # ======================================================
 
 import streamlit as st
@@ -93,6 +94,28 @@ def audit(event, meta=None):
     json.dump(rows, open(AUDIT_LOG, "w"), indent=2)
 
 # ======================================================
+# SAFE AI WRAPPER (Governance Layer)
+# ======================================================
+def safe_ai_call(prompt, mode="Hospital AI"):
+    try:
+        result = external_research_answer(prompt)
+        if not result or "answer" not in result:
+            return {"status": "error", "answer": "⚠ AI returned empty response. Please retry."}
+        return {"status": "ok", "answer": result["answer"]}
+    except Exception as e:
+        audit("ai_failure", {"mode": mode, "error": str(e)})
+        return {
+            "status": "down",
+            "answer": (
+                "⚠ AI service temporarily unavailable.\n\n"
+                "Hospital Governance Policy:\n"
+                "• No unsafe response generated\n"
+                "• No hallucinated content\n"
+                "• Please retry later"
+            )
+        }
+
+# ======================================================
 # AUTH (rerun-safe)
 # ======================================================
 def login_ui():
@@ -108,7 +131,7 @@ def login_ui():
             st.session_state.role = users[username]["role"]
             audit("login", {"user": username})
             st.success("Login successful")
-            st.rerun()  # ✅ correct rerun
+            st.rerun()
         else:
             st.error("Invalid username or password")
 
@@ -289,7 +312,7 @@ st.markdown("## 🧠 ĀROGYABODHA AI — Hospital Clinical Intelligence Platform
 st.caption("Hospital-grade • Evidence-locked • Governance enabled")
 
 # ======================================================
-# CLINICAL RESEARCH COPILOT
+# CLINICAL RESEARCH COPILOT (MODE ISOLATED)
 # ======================================================
 if module == "Clinical Research Copilot":
     st.subheader("🔬 Clinical Research Copilot")
@@ -300,22 +323,32 @@ if module == "Clinical Research Copilot":
     if st.button("🚀 Analyze") and query:
         audit("clinical_query", {"query": query, "mode": mode})
 
-        t1, t2, t3, t4 = st.tabs(["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"])
+        # Dynamic tabs based on mode (Governance)
+        if mode == "Hospital AI":
+            tabs = ["🏥 Hospital", "📚 Library"]
+        elif mode == "Global AI":
+            tabs = ["🌍 Global"]
+        else:  # Hybrid
+            tabs = ["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"]
+
+        tab_objs = st.tabs(tabs)
+        tab_map = dict(zip(tabs, tab_objs))
 
         # -------- Hospital AI --------
-        with t1:
-            st.subheader("🏥 Hospital AI — Evidence Locked")
+        if mode in ["Hospital AI", "Hybrid AI"]:
+            with tab_map["🏥 Hospital"]:
+                st.subheader("🏥 Hospital AI — Evidence Locked")
 
-            if not st.session_state.index_ready:
-                st.error("Hospital evidence index not built. Upload PDFs and click 'Build Index'.")
-            else:
-                qemb = embedder.encode([query])
-                _, I = st.session_state.index.search(np.array(qemb), 5)
+                if not st.session_state.index_ready:
+                    st.error("Hospital evidence index not built. Upload PDFs and click 'Build Index'.")
+                else:
+                    qemb = embedder.encode([query])
+                    _, I = st.session_state.index.search(np.array(qemb), 5)
 
-                context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
-                sources = [st.session_state.sources[i] for i in I[0]]
+                    context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
+                    sources = [st.session_state.sources[i] for i in I[0]]
 
-                prompt = f"""
+                    prompt = f"""
 You are a Hospital Clinical Decision Support AI.
 Use ONLY hospital evidence. Do NOT hallucinate.
 
@@ -325,45 +358,55 @@ Hospital Evidence:
 Doctor Question:
 {query}
 """
-                answer = external_research_answer(prompt).get("answer", "")
+                    resp = safe_ai_call(prompt, mode="Hospital AI")
+                    answer = resp["answer"]
 
-                level, coverage = semantic_evidence_level(answer, context)
-                confidence = confidence_score(answer, len(sources))
+                    if resp["status"] != "ok":
+                        st.error(answer)
+                    else:
+                        level, coverage = semantic_evidence_level(answer, context)
+                        confidence = confidence_score(answer, len(sources))
 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Confidence", f"{confidence}%")
-                c2.metric("Evidence Coverage", f"{coverage}%")
-                c3.metric("Evidence Level", level)
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Confidence", f"{confidence}%")
+                        c2.metric("Evidence Coverage", f"{coverage}%")
+                        c3.metric("Evidence Level", level)
 
-                if not clinical_safety_gate(level):
-                    st.error("❌ Blocked — Insufficient hospital evidence")
-                else:
-                    st.success("Hospital Evidence Answer")
-                    st.write(answer)
-                    st.markdown("##### Evidence Sources")
-                    for s in sources:
-                        st.info(s)
+                        if not clinical_safety_gate(level):
+                            st.error("❌ Blocked — Insufficient hospital evidence")
+                        else:
+                            st.success("Hospital Evidence Answer")
+                            st.write(answer)
+                            st.markdown("##### Evidence Sources")
+                            for s in sources:
+                                st.info(s)
 
         # -------- Global AI --------
-        with t2:
-            st.subheader("🌍 Global Medical Research")
-            global_ans = external_research_answer(query).get("answer", "")
-            st.write(global_ans)
+        if mode in ["Global AI", "Hybrid AI"]:
+            with tab_map["🌍 Global"]:
+                st.subheader("🌍 Global Medical Research")
+                resp = safe_ai_call(query, mode="Global AI")
+                if resp["status"] != "ok":
+                    st.error(resp["answer"])
+                else:
+                    st.write(resp["answer"])
 
         # -------- Outcomes --------
-        with t3:
-            st.subheader("🧪 Outcomes")
-            if "fda" in (global_ans or "").lower():
-                st.success("FDA-approved therapy detected")
-            else:
-                st.info("No FDA outcome keyword detected in global summary.")
+        if mode == "Hybrid AI":
+            with tab_map["🧪 Outcomes"]:
+                st.subheader("🧪 Outcomes")
+                if "fda" in resp["answer"].lower():
+                    st.success("FDA-approved therapy detected")
+                else:
+                    st.info("No FDA outcome keyword detected.")
 
         # -------- Library --------
-        with t4:
-            st.subheader("📚 Medical Library")
-            for pdf in os.listdir(PDF_FOLDER):
-                if pdf.endswith(".pdf"):
-                    st.write("📄", pdf)
+        if "📚 Library" in tab_map:
+            with tab_map["📚 Library"]:
+                st.subheader("📚 Medical Library")
+                for pdf in os.listdir(PDF_FOLDER):
+                    if pdf.endswith(".pdf"):
+                        st.write("📄", pdf)
 
 # ======================================================
 # LAB REPORT INTELLIGENCE
