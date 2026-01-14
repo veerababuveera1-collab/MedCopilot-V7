@@ -1,18 +1,16 @@
 # ======================================================
 # ĀROGYABODHA AI — Hospital Clinical Intelligence Platform
 # ======================================================
-# Features:
-# - Doctor Login + Governance
-# - Medical Library (Upload / Delete / Build Index)
+# - Doctor Login (rerun-safe)
+# - Medical Library (Upload/Delete/Build Index/Status)
 # - FAISS Evidence Engine
 # - 3 AI Modes (Hospital / Global / Hybrid)
+# - 4 Tabs (Hospital, Global, Outcomes, Library)
 # - Clinical Confidence Engine
-# - 4 Clinical Tabs (Hospital, Global, Outcomes, Library)
-# - Lab Report Intelligence (RESULT Column Parser)
+# - Lab Report Intelligence (RESULT parser)
 # - Smart Lab Summary (🟢🟡🔴) + ICU Alerts 🚨
 # - Audit Trail
 # - Help Panel
-# - Rerun Safe
 # ======================================================
 
 import streamlit as st
@@ -55,9 +53,7 @@ AUDIT_LOG = "audit_log.json"
 os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
-# ======================================================
-# USERS
-# ======================================================
+# Seed users (demo)
 if not os.path.exists(USERS_DB):
     json.dump({
         "doctor1": {"password": "doctor123", "role": "Doctor"},
@@ -65,7 +61,7 @@ if not os.path.exists(USERS_DB):
     }, open(USERS_DB, "w"), indent=2)
 
 # ======================================================
-# SESSION
+# SESSION STATE
 # ======================================================
 defaults = {
     "logged_in": False,
@@ -74,43 +70,55 @@ defaults = {
     "index": None,
     "documents": [],
     "sources": [],
-    "index_ready": False
+    "index_ready": False,
+    "show_help": False
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ======================================================
-# AUTH + AUDIT
+# AUDIT
 # ======================================================
 def audit(event, meta=None):
-    logs = []
+    rows = []
     if os.path.exists(AUDIT_LOG):
-        logs = json.load(open(AUDIT_LOG))
-    logs.append({
+        rows = json.load(open(AUDIT_LOG))
+    rows.append({
         "time": str(datetime.datetime.now()),
-        "user": st.session_state.username,
+        "user": st.session_state.get("username"),
         "event": event,
         "meta": meta or {}
     })
-    json.dump(logs, open(AUDIT_LOG, "w"), indent=2)
+    json.dump(rows, open(AUDIT_LOG, "w"), indent=2)
 
+# ======================================================
+# AUTH (rerun-safe)
+# ======================================================
 def login_ui():
     st.markdown("### 🔐 Doctor Login")
-    u = st.text_input("Username")
-    p = st.text_input("Password", type="password")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
 
     if st.button("Login"):
         users = json.load(open(USERS_DB))
-        if u in users and users[u]["password"] == p:
+        if username in users and users[username]["password"] == password:
             st.session_state.logged_in = True
-            st.session_state.username = u
-            st.session_state.role = users[u]["role"]
-            audit("login")
+            st.session_state.username = username
+            st.session_state.role = users[username]["role"]
+            audit("login", {"user": username})
             st.success("Login successful")
-            st.stop()
+            st.rerun()  # ✅ correct rerun
         else:
-            st.error("Invalid credentials")
+            st.error("Invalid username or password")
+
+def logout_ui():
+    if st.sidebar.button("Logout"):
+        audit("logout", {"user": st.session_state.username})
+        st.session_state.logged_in = False
+        st.session_state.username = None
+        st.session_state.role = None
+        st.rerun()
 
 if not st.session_state.logged_in:
     login_ui()
@@ -147,6 +155,7 @@ def build_index():
     pickle.dump({"documents": docs, "sources": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
 
+# Load index if exists
 if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
     st.session_state.index = faiss.read_index(INDEX_FILE)
     data = pickle.load(open(CACHE_FILE, "rb"))
@@ -180,12 +189,10 @@ def confidence_score(answer, n_sources):
     return min(score, 95)
 
 def clinical_safety_gate(level):
-    if level == "INSUFFICIENT":
-        return False
-    return True
+    return level != "INSUFFICIENT"
 
 # ======================================================
-# LAB RULES
+# LAB RULES + PARSER
 # ======================================================
 LAB_RULES = {
     "Total Bilirubin": (0.3, 1.2, "mg/dL"),
@@ -204,8 +211,7 @@ def extract_lab_values(text):
     return found
 
 def generate_lab_summary(values):
-    summary = []
-    alerts = []
+    summary, alerts = [], []
     for test, val in values.items():
         low, high, unit = LAB_RULES[test]
         if val < low:
@@ -224,13 +230,11 @@ def generate_lab_summary(values):
     return summary, alerts
 
 # ======================================================
-# SIDEBAR
+# SIDEBAR (Governance + Library)
 # ======================================================
 st.sidebar.markdown(f"👨‍⚕️ User: **{st.session_state.username}**")
+logout_ui()
 
-# ---------------------------
-# Medical Library
-# ---------------------------
 st.sidebar.subheader("📁 Medical Library")
 
 uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
@@ -245,12 +249,14 @@ if st.sidebar.button("🔄 Build Index"):
     st.session_state.index_ready = True
     st.sidebar.success("Hospital Evidence Index Built")
 
+# Index status
 if os.path.exists(INDEX_FILE):
     st.sidebar.markdown("🟢 Index Status: READY")
 else:
     st.sidebar.markdown("🔴 Index Status: NOT BUILT")
 
-# Library files
+# Library list + delete
+st.sidebar.markdown("#### 📚 Library Files")
 for pdf in os.listdir(PDF_FOLDER):
     if pdf.endswith(".pdf"):
         c1, c2 = st.sidebar.columns([5,1])
@@ -260,11 +266,14 @@ for pdf in os.listdir(PDF_FOLDER):
             if os.path.exists(INDEX_FILE): os.remove(INDEX_FILE)
             if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
             st.session_state.index_ready = False
-            st.stop()
+            st.rerun()
 
 # Help
 if st.sidebar.button("❓ Help"):
-    st.sidebar.info("Upload PDFs → Build Index → Ask Question → Select AI Mode")
+    st.session_state.show_help = not st.session_state.show_help
+
+if st.session_state.show_help:
+    st.sidebar.info("Workflow: Upload PDFs → Build Index → Ask Question → Select AI Mode")
 
 # Module selector
 module = st.sidebar.radio("Select Module", [
@@ -289,19 +298,16 @@ if module == "Clinical Research Copilot":
     mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
 
     if st.button("🚀 Analyze") and query:
-
         audit("clinical_query", {"query": query, "mode": mode})
 
         t1, t2, t3, t4 = st.tabs(["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"])
 
-        # --------------------
-        # Hospital AI
-        # --------------------
+        # -------- Hospital AI --------
         with t1:
             st.subheader("🏥 Hospital AI — Evidence Locked")
 
             if not st.session_state.index_ready:
-                st.error("Hospital evidence index not built.")
+                st.error("Hospital evidence index not built. Upload PDFs and click 'Build Index'.")
             else:
                 qemb = embedder.encode([query])
                 _, I = st.session_state.index.search(np.array(qemb), 5)
@@ -311,7 +317,7 @@ if module == "Clinical Research Copilot":
 
                 prompt = f"""
 You are a Hospital Clinical Decision Support AI.
-Use ONLY hospital evidence.
+Use ONLY hospital evidence. Do NOT hallucinate.
 
 Hospital Evidence:
 {context}
@@ -334,29 +340,25 @@ Doctor Question:
                 else:
                     st.success("Hospital Evidence Answer")
                     st.write(answer)
-
+                    st.markdown("##### Evidence Sources")
                     for s in sources:
                         st.info(s)
 
-        # --------------------
-        # Global AI
-        # --------------------
+        # -------- Global AI --------
         with t2:
             st.subheader("🌍 Global Medical Research")
             global_ans = external_research_answer(query).get("answer", "")
             st.write(global_ans)
 
-        # --------------------
-        # Outcomes
-        # --------------------
+        # -------- Outcomes --------
         with t3:
             st.subheader("🧪 Outcomes")
-            if "fda" in global_ans.lower():
+            if "fda" in (global_ans or "").lower():
                 st.success("FDA-approved therapy detected")
+            else:
+                st.info("No FDA outcome keyword detected in global summary.")
 
-        # --------------------
-        # Library
-        # --------------------
+        # -------- Library --------
         with t4:
             st.subheader("📚 Medical Library")
             for pdf in os.listdir(PDF_FOLDER):
@@ -384,8 +386,11 @@ if module == "Lab Report Intelligence":
         summary, alerts = generate_lab_summary(values)
 
         st.markdown("### 🧾 Smart Lab Summary")
-        for t,v,u,s in summary:
-            st.write(f"{t}: {v} {u} — {s}")
+        if not summary:
+            st.warning("Unable to auto-detect RESULT values (scanned PDFs may need OCR).")
+        else:
+            for t,v,u,s in summary:
+                st.write(f"{t}: {v} {u} — {s}")
 
         if alerts:
             st.markdown("### 🚨 ICU Alerts")
