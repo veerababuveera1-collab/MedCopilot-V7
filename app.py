@@ -1,6 +1,22 @@
 # ======================================================
 # ĀROGYABODHA AI — Hospital Clinical Intelligence Platform
 # ======================================================
+# Production Build:
+# - Doctor Login (rerun-safe)
+# - Medical Library (Upload/Delete/Build Index/Status)
+# - FAISS Evidence Engine
+# - 3 AI Modes (Hospital / Global / Hybrid) [MODE ISOLATED]
+# - Dynamic Tabs (Hospital / Global / Outcomes / Library)
+# - Clinical Confidence Engine
+# - Evidence Citation Panel
+# - Explainable AI
+# - OCR fallback (no crash if missing)
+# - Lab Report Intelligence
+# - Smart Lab Summary + ICU Alerts
+# - Audit Trail
+# - Governance Layer
+# - Safe AI Wrapper
+# ======================================================
 
 import streamlit as st
 import os, json, pickle, datetime, re
@@ -11,10 +27,13 @@ from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
 from external_research import external_research_answer
 
-# OCR Engine
-import pytesseract
-from pdf2image import convert_from_path
-from PIL import Image
+# ---------------- OCR (Safe Optional) ----------------
+OCR_AVAILABLE = True
+try:
+    import pytesseract
+    from pdf2image import convert_from_path
+except:
+    OCR_AVAILABLE = False
 
 # ======================================================
 # PAGE CONFIG
@@ -87,7 +106,7 @@ def audit(event, meta=None):
     json.dump(rows, open(AUDIT_LOG, "w"), indent=2)
 
 # ======================================================
-# SAFE AI WRAPPER
+# SAFE AI WRAPPER (Governance)
 # ======================================================
 def safe_ai_call(prompt, mode="AI"):
     try:
@@ -99,7 +118,13 @@ def safe_ai_call(prompt, mode="AI"):
         audit("ai_failure", {"mode": mode, "error": str(e)})
         return {
             "status": "down",
-            "answer": "⚠ AI service temporarily unavailable. Governance block applied."
+            "answer": (
+                "⚠ AI service temporarily unavailable.\n\n"
+                "Hospital Governance Policy:\n"
+                "• No hallucinated content generated\n"
+                "• No unsafe response\n"
+                "• Please retry later"
+            )
         }
 
 # ======================================================
@@ -155,7 +180,7 @@ def build_index():
                 t = p.extract_text()
                 if t and len(t) > 100:
                     docs.append(t)
-                    srcs.append(f"{pdf} – Page {i+1}")
+                    srcs.append(f"{pdf} — Page {i+1}")
     if not docs:
         return None, [], []
     emb = embedder.encode(docs)
@@ -173,7 +198,7 @@ if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
     st.session_state.index_ready = True
 
 # ======================================================
-# OCR ENGINE
+# OCR ENGINE (Safe)
 # ======================================================
 def extract_text_from_pdf(pdf_path):
     text = ""
@@ -186,12 +211,40 @@ def extract_text_from_pdf(pdf_path):
     except:
         pass
 
-    if len(text.strip()) < 100:
-        images = convert_from_path(pdf_path, dpi=300)
-        for img in images:
-            text += pytesseract.image_to_string(img) + "\n"
+    if len(text.strip()) < 200 and OCR_AVAILABLE:
+        try:
+            images = convert_from_path(pdf_path, dpi=300)
+            for img in images:
+                text += pytesseract.image_to_string(img) + "\n"
+        except:
+            pass
 
     return text
+
+# ======================================================
+# CLINICAL CONFIDENCE ENGINE
+# ======================================================
+def semantic_similarity(a, b):
+    ea = embedder.encode([a])[0]
+    eb = embedder.encode([b])[0]
+    return float(np.dot(ea, eb) / (np.linalg.norm(ea) * np.linalg.norm(eb)))
+
+def semantic_evidence_level(answer, context):
+    sim = semantic_similarity(answer, context)
+    if sim >= 0.55:
+        return "STRONG", int(sim * 100)
+    elif sim >= 0.30:
+        return "PARTIAL", int(sim * 100)
+    else:
+        return "INSUFFICIENT", int(sim * 100)
+
+def confidence_score(answer, n_sources):
+    score = 60
+    if n_sources >= 3: score += 15
+    if "fda" in answer.lower(): score += 10
+    if any(x in answer.lower() for x in ["mortality", "survival", "outcome"]):
+        score += 10
+    return min(score, 95)
 
 # ======================================================
 # LAB RULES + PARSER
@@ -207,19 +260,12 @@ LAB_RULES = {
 def extract_lab_values(text):
     values = {}
     lines = [l.strip() for l in text.split("\n") if l.strip()]
-
     for i, line in enumerate(lines):
         for test in LAB_RULES:
             if test.lower() in line.lower():
                 nums = re.findall(r"\b\d+\.?\d*\b", line)
                 if nums:
                     values[test] = float(nums[-1])
-                else:
-                    for j in range(i+1, min(i+4, len(lines))):
-                        nums = re.findall(r"\b\d+\.?\d*\b", lines[j])
-                        if nums:
-                            values[test] = float(nums[0])
-                            break
     return values
 
 def generate_lab_summary(values):
@@ -242,7 +288,7 @@ def generate_lab_summary(values):
     return summary, alerts
 
 # ======================================================
-# SIDEBAR
+# SIDEBAR (Governance)
 # ======================================================
 st.sidebar.markdown(f"👨‍⚕️ User: **{st.session_state.username}**")
 logout_ui()
@@ -261,13 +307,11 @@ if st.sidebar.button("🔄 Build Index"):
     st.session_state.index_ready = True
     st.sidebar.success("Hospital Evidence Index Built")
 
-# Index status
 if os.path.exists(INDEX_FILE):
     st.sidebar.markdown("🟢 Index Status: READY")
 else:
     st.sidebar.markdown("🔴 Index Status: NOT BUILT")
 
-# Library list
 st.sidebar.markdown("#### 📚 Library Files")
 for pdf in os.listdir(PDF_FOLDER):
     if pdf.endswith(".pdf"):
@@ -280,7 +324,6 @@ for pdf in os.listdir(PDF_FOLDER):
             st.session_state.index_ready = False
             st.rerun()
 
-# Help
 if st.sidebar.button("❓ Help"):
     st.session_state.show_help = not st.session_state.show_help
 
@@ -300,7 +343,7 @@ st.markdown("## 🧠 ĀROGYABODHA AI — Hospital Clinical Intelligence Platform
 st.caption("Hospital-grade • Evidence-locked • OCR-enabled • Governance enabled")
 
 # ======================================================
-# CLINICAL RESEARCH COPILOT
+# CLINICAL RESEARCH COPILOT (Mode Isolated)
 # ======================================================
 if module == "Clinical Research Copilot":
     st.subheader("🔬 Clinical Research Copilot")
@@ -311,19 +354,32 @@ if module == "Clinical Research Copilot":
     if st.button("🚀 Analyze") and query:
         audit("clinical_query", {"query": query, "mode": mode})
 
-        tabs = ["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"]
-        t1, t2, t3, t4 = st.tabs(tabs)
+        # Mode Isolation
+        if mode == "Hospital AI":
+            tabs = ["🏥 Hospital", "📚 Library"]
+        elif mode == "Global AI":
+            tabs = ["🌍 Global"]
+        else:
+            tabs = ["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"]
 
-        with t1:
-            if not st.session_state.index_ready:
-                st.error("Hospital index not built.")
-            else:
-                qemb = embedder.encode([query])
-                _, I = st.session_state.index.search(np.array(qemb), 5)
-                context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
+        tab_objs = st.tabs(tabs)
+        tab_map = dict(zip(tabs, tab_objs))
 
-                prompt = f"""
-Use only hospital evidence.
+        # ---------- Hospital AI ----------
+        if "🏥 Hospital" in tab_map:
+            with tab_map["🏥 Hospital"]:
+                if not st.session_state.index_ready:
+                    st.error("Hospital index not built.")
+                else:
+                    qemb = embedder.encode([query])
+                    _, I = st.session_state.index.search(np.array(qemb), 5)
+
+                    context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
+                    sources = [st.session_state.sources[i] for i in I[0]]
+
+                    prompt = f"""
+You are a Hospital Clinical Decision Support AI.
+Use ONLY hospital evidence.
 
 Hospital Evidence:
 {context}
@@ -331,23 +387,50 @@ Hospital Evidence:
 Doctor Question:
 {query}
 """
-                resp = safe_ai_call(prompt, mode="Hospital AI")
+                    resp = safe_ai_call(prompt, mode="Hospital AI")
+
+                    if resp["status"] != "ok":
+                        st.error(resp["answer"])
+                    else:
+                        answer = resp["answer"]
+                        level, coverage = semantic_evidence_level(answer, context)
+                        confidence = confidence_score(answer, len(sources))
+
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Confidence", f"{confidence}%")
+                        c2.metric("Evidence Coverage", f"{coverage}%")
+                        c3.metric("Evidence Level", level)
+
+                        if level == "INSUFFICIENT":
+                            st.error("❌ Blocked — Insufficient hospital evidence")
+                        else:
+                            st.success("Hospital Evidence Answer")
+                            st.write(answer)
+
+                            st.markdown("### 📑 Evidence Sources")
+                            for s in sources:
+                                st.info(s)
+
+        # ---------- Global AI ----------
+        if "🌍 Global" in tab_map:
+            with tab_map["🌍 Global"]:
+                resp = safe_ai_call(query, mode="Global AI")
                 st.write(resp["answer"])
 
-        with t2:
-            resp = safe_ai_call(query, mode="Global AI")
-            st.write(resp["answer"])
+        # ---------- Outcomes ----------
+        if "🧪 Outcomes" in tab_map:
+            with tab_map["🧪 Outcomes"]:
+                if "fda" in resp["answer"].lower():
+                    st.success("FDA-approved therapy detected")
+                else:
+                    st.info("No FDA outcome keyword detected.")
 
-        with t3:
-            if "fda" in (resp["answer"] or "").lower():
-                st.success("FDA-approved therapy detected")
-            else:
-                st.info("No FDA outcome keyword detected.")
-
-        with t4:
-            for pdf in os.listdir(PDF_FOLDER):
-                if pdf.endswith(".pdf"):
-                    st.write("📄", pdf)
+        # ---------- Library ----------
+        if "📚 Library" in tab_map:
+            with tab_map["📚 Library"]:
+                for pdf in os.listdir(PDF_FOLDER):
+                    if pdf.endswith(".pdf"):
+                        st.write("📄", pdf)
 
 # ======================================================
 # LAB REPORT INTELLIGENCE (OCR Enabled)
@@ -362,7 +445,6 @@ if module == "Lab Report Intelligence":
             f.write(lab_file.getbuffer())
 
         report_text = extract_text_from_pdf("lab_report.pdf")
-
         values = extract_lab_values(report_text)
         summary, alerts = generate_lab_summary(values)
 
