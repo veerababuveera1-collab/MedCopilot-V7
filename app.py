@@ -1,14 +1,10 @@
 import streamlit as st
-import os, json, pickle, datetime, re
-import numpy as np
-import faiss
-import pandas as pd
-from sentence_transformers import SentenceTransformer
+import os, json, datetime, re
 from pypdf import PdfReader
 from external_research import external_research_answer
 
 # ======================================================
-# PAGE CONFIG + WOW UI
+# PAGE CONFIG + UI
 # ======================================================
 st.set_page_config(
     page_title="ĀROGYABODHA AI — Clinical Intelligence Command Center",
@@ -29,6 +25,7 @@ body { background: radial-gradient(circle at top, #020617, #020617); color: #e5e
         border-radius: 14px; font-weight: bold; color: black; }
 .normal { background: linear-gradient(135deg, #7CFFCB, #00ff9c); padding: 15px;
           border-radius: 14px; font-weight: bold; color: black; }
+.small { opacity: .8; font-size: 0.9rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -42,68 +39,64 @@ st.info(
 )
 
 # ======================================================
-# STORAGE
-# ======================================================
-PDF_FOLDER = "medical_library"
-VECTOR_FOLDER = "vector_cache"
-INDEX_FILE = f"{VECTOR_FOLDER}/index.faiss"
-CACHE_FILE = f"{VECTOR_FOLDER}/cache.pkl"
-ANALYTICS_FILE = "analytics_log.json"
-
-os.makedirs(PDF_FOLDER, exist_ok=True)
-os.makedirs(VECTOR_FOLDER, exist_ok=True)
-
-# ======================================================
-# AI MODEL
-# ======================================================
-@st.cache_resource
-def load_embedder():
-    return SentenceTransformer("all-MiniLM-L6-v2")
-
-embedder = load_embedder()
-
-# ======================================================
-# SMART LAB RULE ENGINE
+# MEDICAL REFERENCE RULES
 # ======================================================
 LAB_RULES = {
+    # CBC
     "Hemoglobin": {"low": 13, "high": 17, "unit": "g/dL"},
     "WBC": {"low": 4000, "high": 10000, "unit": "/cumm"},
     "Platelets": {"low": 150000, "high": 410000, "unit": "/cumm"},
-    "Creatinine": {"low": 0.7, "high": 1.3, "unit": "mg/dL"},
+    "RBC": {"low": 4.5, "high": 5.5, "unit": "million/cumm"},
+    "MCV": {"low": 81, "high": 101, "unit": "fL"},
+    "MCH": {"low": 27, "high": 32, "unit": "pg"},
+    "MCHC": {"low": 31.5, "high": 34.5, "unit": "g/dL"},
+
+    # LFT
     "Total Bilirubin": {"low": 0.3, "high": 1.2, "unit": "mg/dL"},
+    "Direct Bilirubin": {"low": 0.0, "high": 0.2, "unit": "mg/dL"},
+    "Indirect Bilirubin": {"low": 0.3, "high": 1.0, "unit": "mg/dL"},
     "SGPT": {"low": 0, "high": 50, "unit": "U/L"},
     "SGOT": {"low": 0, "high": 50, "unit": "U/L"},
-    "GGT": {"low": 0, "high": 55, "unit": "U/L"}
+    "ALP": {"low": 43, "high": 115, "unit": "U/L"},
+    "GGT": {"low": 0, "high": 55, "unit": "U/L"},
+    "Albumin": {"low": 3.5, "high": 5.2, "unit": "g/dL"},
+    "Total Protein": {"low": 6.6, "high": 8.3, "unit": "g/dL"},
+
+    # RFT
+    "Creatinine": {"low": 0.7, "high": 1.3, "unit": "mg/dL"},
+    "Urea": {"low": 10, "high": 45, "unit": "mg/dL"},
 }
 
 # ======================================================
-# LAB EXTRACTION ENGINE (CBC + LFT + RFT)
+# PDF TABLE EXTRACTION ENGINE (FINAL FIX)
 # ======================================================
-def extract_lab_values(text):
-    patterns = {
-        "Hemoglobin": r"Hemoglobin.*?(\d+\.?\d*)",
-        "WBC": r"(WBC|TLC|Total Leukocyte Count).*?(\d+)",
-        "Platelets": r"Platelet.*?(\d+)",
-        "Creatinine": r"Creatinine.*?(\d+\.?\d*)",
-        "Total Bilirubin": r"Total Bilirubin.*?(\d+\.?\d*)",
-        "SGPT": r"(SGPT|ALT).*?(\d+)",
-        "SGOT": r"(SGOT|AST).*?(\d+)",
-        "GGT": r"(GGT|Gamma).*?(\d+)"
-    }
+def extract_lab_values_from_pdf(text):
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    found = {}
 
-    results = {}
-    for test, pattern in patterns.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            value = match.groups()[-1]
-            results[test] = float(value)
+    for i, line in enumerate(lines):
+        key = None
 
-    return results
+        # Detect test names
+        for test in LAB_RULES.keys():
+            if test.lower() in line.lower():
+                key = test
+                break
+
+        if key:
+            # Look next lines for numeric value
+            for j in range(i+1, min(i+5, len(lines))):
+                val_match = re.search(r"(\d+\.?\d*)", lines[j])
+                if val_match:
+                    found[key] = float(val_match.group(1))
+                    break
+
+    return found
 
 # ======================================================
 # MEDICAL DECISION LOGIC
 # ======================================================
-def classify_value(test, value):
+def classify(test, value):
     ref = LAB_RULES[test]
     if value < ref["low"]:
         return "LOW"
@@ -112,45 +105,40 @@ def classify_value(test, value):
     else:
         return "NORMAL"
 
-def generate_smart_summary(values):
-    summary = []
+def generate_summary(values):
+    rows = []
     alerts = []
 
     for test, value in values.items():
-        status = classify_value(test, value)
+        status = classify(test, value)
         unit = LAB_RULES[test]["unit"]
 
         if status == "HIGH":
-            summary.append((test, value, unit, "🔴 HIGH"))
+            flag = "🔴 HIGH"
         elif status == "LOW":
-            summary.append((test, value, unit, "🟡 LOW"))
+            flag = "🟡 LOW"
         else:
-            summary.append((test, value, unit, "🟢 NORMAL"))
+            flag = "🟢 NORMAL"
 
-        # ICU rules
-        if test == "Creatinine" and value > 3:
-            alerts.append("🚨 CRITICAL: Acute Renal Failure risk")
-        if test == "Total Bilirubin" and value > 5:
-            alerts.append("🚨 CRITICAL: Severe Jaundice – ICU required")
+        rows.append((test, value, unit, flag))
+
+        # ICU Rules
+        if test == "Total Bilirubin" and value >= 5:
+            alerts.append("🚨 CRITICAL: Severe Jaundice — ICU evaluation required.")
+        if test == "Creatinine" and value >= 3:
+            alerts.append("🚨 CRITICAL: Acute Renal Failure risk.")
         if test == "Platelets" and value < 50000:
-            alerts.append("🚨 CRITICAL: Bleeding risk")
+            alerts.append("🚨 CRITICAL: Bleeding risk.")
+        if test == "Hemoglobin" and value < 7:
+            alerts.append("🚨 CRITICAL: Severe Anemia — transfusion needed.")
 
-    return summary, alerts
+    return rows, alerts
 
 # ======================================================
 # SIDEBAR
 # ======================================================
 st.sidebar.title("🧠 ĀROGYABODHA AI")
-st.sidebar.subheader("📁 Medical Library")
-
-uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
-if uploads:
-    for f in uploads:
-        open(os.path.join(PDF_FOLDER, f.name), "wb").write(f.getbuffer())
-    st.sidebar.success("PDFs uploaded")
-
-st.sidebar.divider()
-app_mode = st.sidebar.radio("Select Module", ["Clinical Research Copilot", "Lab Report Intelligence"])
+app_mode = st.sidebar.radio("Select Module", ["Lab Report Intelligence"])
 
 # ======================================================
 # HEADER
@@ -158,7 +146,7 @@ app_mode = st.sidebar.radio("Select Module", ["Clinical Research Copilot", "Lab 
 st.markdown("<div class='card'><h1>🧠 ĀROGYABODHA AI — Clinical Intelligence Command Center</h1></div>", unsafe_allow_html=True)
 
 # ======================================================
-# LAB REPORT INTELLIGENCE (UPGRADED)
+# LAB REPORT INTELLIGENCE
 # ======================================================
 if app_mode == "Lab Report Intelligence":
 
@@ -173,28 +161,33 @@ if app_mode == "Lab Report Intelligence":
         reader = PdfReader("lab_report.pdf")
         report_text = ""
         for page in reader.pages:
-            report_text += page.extract_text() + "\n"
+            report_text += (page.extract_text() or "") + "\n"
 
-        values = extract_lab_values(report_text)
+        values = extract_lab_values_from_pdf(report_text)
+        summary, alerts = generate_summary(values)
 
-        summary, alerts = generate_smart_summary(values)
-
+        # Smart Summary
         st.markdown("<div class='card'><h3>🧾 Smart Lab Summary</h3></div>", unsafe_allow_html=True)
 
-        for test, value, unit, status in summary:
-            if "HIGH" in status:
-                st.markdown(f"<div class='alert'>{test}: {value} {unit} — {status}</div>", unsafe_allow_html=True)
-            elif "LOW" in status:
-                st.markdown(f"<div class='warn'>{test}: {value} {unit} — {status}</div>", unsafe_allow_html=True)
-            else:
-                st.markdown(f"<div class='normal'>{test}: {value} {unit} — {status}</div>", unsafe_allow_html=True)
+        if not summary:
+            st.warning("⚠ Unable to auto-detect lab parameters from this PDF (Scanned image PDF needs OCR).")
 
+        for test, value, unit, flag in summary:
+            if "HIGH" in flag:
+                st.markdown(f"<div class='alert'>{test}: {value} {unit} — {flag}</div>", unsafe_allow_html=True)
+            elif "LOW" in flag:
+                st.markdown(f"<div class='warn'>{test}: {value} {unit} — {flag}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='normal'>{test}: {value} {unit} — {flag}</div>", unsafe_allow_html=True)
+
+        # ICU Alerts
         if alerts:
             st.markdown("<div class='card'><h3>🚨 ICU Red Alerts</h3></div>", unsafe_allow_html=True)
             for a in alerts:
                 st.markdown(f"<div class='alert'>{a}</div>", unsafe_allow_html=True)
 
-        lab_question = st.text_input("Ask ĀROGYABODHA AI")
+        # Ask AI
+        lab_question = st.text_input("Ask ĀROGYABODHA AI about this report")
 
         if st.button("🧠 Analyze Lab Report"):
             prompt = f"""
@@ -206,7 +199,11 @@ Lab Report:
 Doctor Question:
 {lab_question}
 
-Provide diagnosis pattern, risks and next steps.
+Provide:
+- Diagnosis pattern
+- Clinical risks
+- Next steps
+- ICU escalation criteria
 """
             answer = external_research_answer(prompt).get("answer", "")
             st.markdown("<div class='success'>AI Clinical Opinion</div>", unsafe_allow_html=True)
