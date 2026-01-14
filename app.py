@@ -19,6 +19,7 @@ try:
 except:
     OCR_AVAILABLE = False
 
+
 # ======================================================
 # PAGE CONFIG
 # ======================================================
@@ -73,6 +74,7 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
+
 # ======================================================
 # AUDIT
 # ======================================================
@@ -88,6 +90,7 @@ def audit(event, meta=None):
     })
     json.dump(rows, open(AUDIT_LOG, "w"), indent=2)
 
+
 # ======================================================
 # SAFE AI WRAPPER
 # ======================================================
@@ -101,39 +104,44 @@ def safe_ai_call(prompt, mode="AI"):
         audit("ai_failure", {"mode": mode, "error": str(e)})
         return {"status": "down", "answer": "⚠ AI service unavailable. Governance block applied."}
 
+
 # ======================================================
-# MODERN LOGIN UI (CubeFactory style)
+# MODERN LOGIN UI (CubeFactory Style)
 # ======================================================
 def login_ui():
     st.markdown("""
     <style>
-    body { background-color: #f6f7fb; }
+    body { background-color: #0f172a; }
+
     .login-container {
         max-width: 1100px;
         margin: auto;
-        margin-top: 80px;
+        margin-top: 70px;
         background: white;
-        border-radius: 14px;
-        box-shadow: 0px 10px 40px rgba(0,0,0,0.08);
+        border-radius: 16px;
+        box-shadow: 0px 20px 80px rgba(0,0,0,0.5);
         display: flex;
         overflow: hidden;
     }
-    .login-left { width: 50%; padding: 60px; }
+
+    .login-left { width: 50%; padding: 70px; }
     .login-right {
         width: 50%;
-        background-image: url("https://images.unsplash.com/photo-1526256262350-7da7584cf5eb");
+        background-image: url("https://images.unsplash.com/photo-1581092919535-7f1b33b4c8d8");
         background-size: cover;
         background-position: center;
         position: relative;
     }
+
     .login-overlay {
         position: absolute;
-        bottom: 40px;
-        left: 40px;
+        bottom: 50px;
+        left: 50px;
         color: white;
     }
-    .login-title { font-size: 32px; font-weight: 700; margin-bottom: 10px; }
-    .login-subtitle { color: #666; margin-bottom: 30px; }
+
+    .login-title { font-size: 36px; font-weight: 800; margin-bottom: 10px; }
+    .login-subtitle { color: #64748b; margin-bottom: 40px; font-size: 17px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -141,13 +149,13 @@ def login_ui():
     <div class="login-container">
         <div class="login-left">
             <div class="login-title">Welcome back</div>
-            <div class="login-subtitle">Please enter your details</div>
+            <div class="login-subtitle">Secure Hospital Access Portal</div>
     """, unsafe_allow_html=True)
 
     with st.form("login_form"):
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Sign in")
+        submitted = st.form_submit_button("🔐 Sign in")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -174,6 +182,7 @@ def login_ui():
         else:
             st.error("❌ Invalid username or password")
 
+
 def logout_ui():
     if st.sidebar.button("Logout"):
         audit("logout", {"user": st.session_state.username})
@@ -182,9 +191,11 @@ def logout_ui():
         st.session_state.role = None
         st.rerun()
 
+
 if not st.session_state.logged_in:
     login_ui()
     st.stop()
+
 
 # ======================================================
 # MODEL
@@ -194,6 +205,7 @@ def load_embedder():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 embedder = load_embedder()
+
 
 # ======================================================
 # FAISS INDEX
@@ -217,6 +229,7 @@ def build_index():
     pickle.dump({"documents": docs, "sources": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
 
+
 if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
     st.session_state.index = faiss.read_index(INDEX_FILE)
     data = pickle.load(open(CACHE_FILE, "rb"))
@@ -224,80 +237,6 @@ if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
     st.session_state.sources = data["sources"]
     st.session_state.index_ready = True
 
-# ======================================================
-# OCR
-# ======================================================
-def extract_text_from_pdf(pdf_path):
-    text = ""
-    try:
-        reader = PdfReader(pdf_path)
-        for page in reader.pages:
-            if page.extract_text():
-                text += page.extract_text() + "\n"
-    except:
-        pass
-
-    if len(text.strip()) < 200 and OCR_AVAILABLE:
-        try:
-            images = convert_from_path(pdf_path, dpi=300)
-            for img in images:
-                text += pytesseract.image_to_string(img) + "\n"
-        except:
-            pass
-
-    return text
-
-# ======================================================
-# CONFIDENCE ENGINE
-# ======================================================
-def semantic_similarity(a, b):
-    ea = embedder.encode([a])[0]
-    eb = embedder.encode([b])[0]
-    return float(np.dot(ea, eb) / (np.linalg.norm(ea) * np.linalg.norm(eb)))
-
-def semantic_evidence_level(answer, context):
-    sim = semantic_similarity(answer, context)
-    if sim >= 0.55:
-        return "STRONG", int(sim * 100)
-    elif sim >= 0.30:
-        return "PARTIAL", int(sim * 100)
-    else:
-        return "INSUFFICIENT", int(sim * 100)
-
-def confidence_score(answer, n_sources):
-    score = 60
-    if n_sources >= 3: score += 15
-    if "fda" in answer.lower(): score += 10
-    return min(score, 95)
-
-# ======================================================
-# LAB ENGINE
-# ======================================================
-LAB_RULES = {
-    "Total Bilirubin": (0.3, 1.2, "mg/dL"),
-    "SGPT": (0, 50, "U/L"),
-    "SGOT": (0, 50, "U/L")
-}
-
-def extract_lab_values(text):
-    values = {}
-    for test in LAB_RULES:
-        match = re.search(test + r".*?(\d+\.?\d*)", text, re.IGNORECASE)
-        if match:
-            values[test] = float(match.group(1))
-    return values
-
-def generate_lab_summary(values):
-    summary, alerts = [], []
-    for test, val in values.items():
-        low, high, unit = LAB_RULES[test]
-        status = "🟢 NORMAL" if low <= val <= high else "🔴 HIGH"
-        summary.append((test, val, unit, status))
-
-        if test == "Total Bilirubin" and val >= 5:
-            alerts.append("🚨 Severe Jaundice — ICU evaluation required")
-
-    return summary, alerts
 
 # ======================================================
 # SIDEBAR
@@ -306,6 +245,7 @@ st.sidebar.markdown(f"👨‍⚕️ User: **{st.session_state.username}**")
 logout_ui()
 
 st.sidebar.subheader("📁 Hospital Evidence Library")
+
 uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
 if uploads:
     for f in uploads:
@@ -326,11 +266,13 @@ module = st.sidebar.radio("Select Module", [
     "Audit Trail"
 ])
 
+
 # ======================================================
 # HEADER
 # ======================================================
 st.markdown("## 🧠 ĀROGYABODHA AI — Hospital Clinical Intelligence Platform")
 st.caption("Hospital-grade • Evidence-locked • OCR-enabled • Governance enabled")
+
 
 # ======================================================
 # CLINICAL RESEARCH COPILOT
@@ -344,9 +286,7 @@ if module == "Clinical Research Copilot":
     if st.button("🚀 Analyze") and query:
         audit("clinical_query", {"query": query, "mode": mode})
 
-        tabs = ["🏥 Hospital", "🌍 Global", "🧪 Outcomes"] if mode=="Hybrid AI" else (
-               ["🏥 Hospital"] if mode=="Hospital AI" else ["🌍 Global"])
-
+        tabs = ["🏥 Hospital", "🌍 Global"] if mode!="Hospital AI" else ["🏥 Hospital"]
         tab_objs = st.tabs(tabs)
 
         if "🏥 Hospital" in tabs:
@@ -363,14 +303,6 @@ if module == "Clinical Research Copilot":
                     resp = safe_ai_call(prompt, "Hospital AI")
 
                     if resp["status"]=="ok":
-                        level, coverage = semantic_evidence_level(resp["answer"], context)
-                        confidence = confidence_score(resp["answer"], len(sources))
-
-                        c1,c2,c3 = st.columns(3)
-                        c1.metric("Confidence", f"{confidence}%")
-                        c2.metric("Coverage", f"{coverage}%")
-                        c3.metric("Evidence", level)
-
                         st.success("Hospital Evidence Answer")
                         st.write(resp["answer"])
 
@@ -385,36 +317,6 @@ if module == "Clinical Research Copilot":
                 resp = safe_ai_call(query, "Global AI")
                 st.write(resp["answer"])
 
-        if "🧪 Outcomes" in tabs:
-            with tab_objs[tabs.index("🧪 Outcomes")]:
-                if "fda" in resp["answer"].lower():
-                    st.success("FDA-approved therapy detected")
-                else:
-                    st.info("No FDA outcome keyword detected")
-
-# ======================================================
-# LAB REPORT INTELLIGENCE
-# ======================================================
-if module == "Lab Report Intelligence":
-    st.subheader("🧪 Lab Report Intelligence")
-
-    lab_file = st.file_uploader("Upload Lab Report (PDF)", type=["pdf"])
-    if lab_file:
-        with open("lab_report.pdf", "wb") as f:
-            f.write(lab_file.getbuffer())
-
-        report_text = extract_text_from_pdf("lab_report.pdf")
-        values = extract_lab_values(report_text)
-        summary, alerts = generate_lab_summary(values)
-
-        st.markdown("### 🧾 Smart Lab Summary")
-        for t,v,u,s in summary:
-            st.write(f"{t}: {v} {u} — {s}")
-
-        if alerts:
-            st.markdown("### 🚨 ICU Alerts")
-            for a in alerts:
-                st.error(a)
 
 # ======================================================
 # AUDIT TRAIL
@@ -424,6 +326,7 @@ if module == "Audit Trail":
     if os.path.exists(AUDIT_LOG):
         df = pd.DataFrame(json.load(open(AUDIT_LOG)))
         st.dataframe(df, use_container_width=True)
+
 
 # ======================================================
 # FOOTER
