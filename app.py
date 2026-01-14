@@ -1,18 +1,6 @@
 # ======================================================
 # ĀROGYABODHA AI — Hospital Clinical Intelligence Platform
 # ======================================================
-# Production Build:
-# - Modern Secure Login (CubeFactory style)
-# - Clinical Research Copilot
-# - Hospital Evidence Engine (FAISS)
-# - 3 AI Modes (Hospital / Global / Hybrid)
-# - Evidence Confidence + Citation Panel
-# - OCR-enabled Lab Report Intelligence
-# - Smart Lab Summary + ICU Alerts
-# - Audit Trail
-# - Governance Safe AI Wrapper
-# - Clean Sidebar
-# ======================================================
 
 import streamlit as st
 import os, json, pickle, datetime, re
@@ -111,13 +99,10 @@ def safe_ai_call(prompt, mode="AI"):
         return {"status": "ok", "answer": result["answer"]}
     except Exception as e:
         audit("ai_failure", {"mode": mode, "error": str(e)})
-        return {
-            "status": "down",
-            "answer": "⚠ AI service temporarily unavailable. Governance block applied."
-        }
+        return {"status": "down", "answer": "⚠ AI service unavailable. Governance block applied."}
 
 # ======================================================
-# MODERN LOGIN UI (CubeFactory Style)
+# MODERN LOGIN UI (CubeFactory style)
 # ======================================================
 def login_ui():
     st.markdown("""
@@ -359,7 +344,7 @@ if module == "Clinical Research Copilot":
     if st.button("🚀 Analyze") and query:
         audit("clinical_query", {"query": query, "mode": mode})
 
-        tabs = ["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"] if mode=="Hybrid AI" else (
+        tabs = ["🏥 Hospital", "🌍 Global", "🧪 Outcomes"] if mode=="Hybrid AI" else (
                ["🏥 Hospital"] if mode=="Hospital AI" else ["🌍 Global"])
 
         tab_objs = st.tabs(tabs)
