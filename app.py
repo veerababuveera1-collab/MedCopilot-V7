@@ -18,7 +18,7 @@ def safe_ai_call(prompt):
     try:
         result = external_research_answer(prompt)
         return result.get("answer", "⚠ AI returned empty response.")
-    except Exception as e:
+    except Exception:
         return "⚠ AI service temporarily unavailable. Please try again later."
 
 # ======================================================
@@ -35,11 +35,16 @@ st.set_page_config(
 # ======================================================
 st.markdown("""
 <style>
-.card { background:#111827;padding:20px;border-radius:12px;margin-bottom:16px;border:1px solid #1f2937;}
-.header { font-size:28px;font-weight:700;color:#e5e7eb }
-.badge-ok {color:#10b981}
-.badge-warn {color:#f59e0b}
-.badge-danger {color:#ef4444}
+body { background:#020617; color:#e5e7eb; }
+.card { background:#0f172a;padding:20px;border-radius:14px;margin-bottom:16px;border:1px solid #1f2937;}
+.header { font-size:30px;font-weight:800;color:#e5e7eb }
+.badge { padding:6px 12px;border-radius:999px;font-weight:700;font-size:13px }
+.ok { background:#22c55e;color:#022c22 }
+.warn { background:#facc15;color:#3b2f00 }
+.danger { background:#ef4444 }
+.info { background:#0ea5e9 }
+.small { opacity:.8 }
+hr { border:0;border-top:1px solid #1f2937 }
 </style>
 """, unsafe_allow_html=True)
 
@@ -91,7 +96,7 @@ def login_ui():
             st.session_state.username = u
             st.session_state.role = users[u]["role"]
             st.success("Login successful")
-            st.experimental_rerun()
+            st.rerun()   # Streamlit-safe rerun
         else:
             st.error("Invalid credentials")
 
@@ -103,7 +108,8 @@ if not st.session_state.logged_in:
 # HEADER
 # ======================================================
 st.markdown("<div class='header'>🧠 ĀROGYABODHA AI — Hospital Clinical Intelligence Platform</div>", unsafe_allow_html=True)
-st.caption("Hospital-grade • Evidence-locked • Doctor-safe")
+st.markdown("<div class='small'>Hospital-grade • Evidence-locked • Governance enabled</div>", unsafe_allow_html=True)
+st.markdown("<hr/>", unsafe_allow_html=True)
 
 # ======================================================
 # SIDEBAR
@@ -111,15 +117,15 @@ st.caption("Hospital-grade • Evidence-locked • Doctor-safe")
 st.sidebar.markdown(f"### 👨‍⚕️ User: {st.session_state.username}")
 st.sidebar.divider()
 
-# Upload PDFs
+# Medical Library Upload
 st.sidebar.subheader("📁 Medical Library")
 uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
 if uploads:
     for f in uploads:
         open(os.path.join(PDF_FOLDER, f.name), "wb").write(f.getbuffer())
-    st.sidebar.success("Uploaded")
+    st.sidebar.success("PDFs uploaded")
 
-# List PDFs with delete
+# Medical Library Viewer + Delete
 for pdf in os.listdir(PDF_FOLDER):
     if pdf.endswith(".pdf"):
         c1, c2 = st.sidebar.columns([4,1])
@@ -130,23 +136,23 @@ for pdf in os.listdir(PDF_FOLDER):
                 os.remove(os.path.join(PDF_FOLDER, pdf))
                 if os.path.exists(INDEX_FILE): os.remove(INDEX_FILE)
                 if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
-                st.experimental_rerun()
+                st.rerun()
 
-# Help
+# Help Panel
 with st.sidebar.expander("❓ Help"):
     st.write("""
 **AI Modes**
-- Hospital AI → Uses only hospital PDFs
-- Global AI → Uses global research
+- Hospital AI → Uses only hospital PDFs (evidence-locked)
+- Global AI → Uses global medical research
 - Hybrid AI → Compares both
 
 **Safety**
 - No diagnosis
 - No prescription
-- Evidence locked
+- Governance enforced
 """)
 
-# Module selector
+# Module Selector
 module = st.sidebar.radio("Select Module", [
     "Clinical Research Copilot",
     "Lab Report Intelligence",
@@ -185,11 +191,19 @@ def build_index():
     return idx, docs, srcs
 
 # ======================================================
-# CLINICAL RESEARCH COPILOT
+# CLINICAL RESEARCH COPILOT (WITH WRAPPERS)
 # ======================================================
 if module == "Clinical Research Copilot":
 
     st.markdown("<div class='card'><h3>🔬 Clinical Research Copilot</h3></div>", unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class='card'>
+    <span class='badge info'>🛡 Governance Enabled</span>
+    <span class='badge info'>📚 Evidence Locked</span>
+    <span class='badge info'>🏥 Hospital Grade</span>
+    </div>
+    """, unsafe_allow_html=True)
 
     query = st.text_input("Ask a clinical research question")
     mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
@@ -203,7 +217,6 @@ if module == "Clinical Research Copilot":
                 idx = faiss.read_index(INDEX_FILE)
                 data = pickle.load(open(CACHE_FILE, "rb"))
                 docs = data["documents"]
-                srcs = data["sources"]
 
             qemb = embedder.encode([query])
             _, I = idx.search(np.array(qemb), 5)
@@ -221,13 +234,17 @@ Doctor Query:
 """
             hospital_ans = safe_ai_call(prompt)
 
-            st.markdown("<div class='card'><h4>🏥 Hospital AI</h4></div>", unsafe_allow_html=True)
+            st.markdown("<div class='card'><h4>🏥 Hospital AI Result</h4></div>", unsafe_allow_html=True)
             st.write(hospital_ans)
 
         if mode in ["Global AI", "Hybrid AI"]:
             global_ans = safe_ai_call(query)
-            st.markdown("<div class='card'><h4>🌍 Global AI</h4></div>", unsafe_allow_html=True)
+            st.markdown("<div class='card'><h4>🌍 Global AI Result</h4></div>", unsafe_allow_html=True)
             st.write(global_ans)
+
+        if mode == "Hybrid AI":
+            st.markdown("<div class='card'><h4>🔀 Hybrid Clinical Verdict</h4></div>", unsafe_allow_html=True)
+            st.write("Hybrid analysis compares hospital protocol with global research for clinical insight.")
 
 # ======================================================
 # LAB REPORT INTELLIGENCE
@@ -249,7 +266,7 @@ if module == "Lab Report Intelligence":
 
         st.text_area("Extracted Report", text, height=250)
 
-        st.markdown("<div class='card'><h4>🧠 Ask AI about this report</h4></div>", unsafe_allow_html=True)
+        st.markdown("<div class='card'><h4>🧠 Ask ĀROGYABODHA AI</h4></div>", unsafe_allow_html=True)
         q = st.text_input("Ask clinical question")
 
         if st.button("Analyze Report"):
@@ -281,11 +298,12 @@ if module == "Audit Trail":
     st.markdown("<div class='card'><h3>🕒 Audit Trail</h3></div>", unsafe_allow_html=True)
     if os.path.exists(AUDIT_LOG):
         df = pd.DataFrame(json.load(open(AUDIT_LOG)))
-        st.dataframe(df)
+        st.dataframe(df, use_container_width=True)
     else:
         st.info("No audit records yet.")
 
 # ======================================================
 # FOOTER
 # ======================================================
+st.markdown("<hr/>", unsafe_allow_html=True)
 st.caption("ĀROGYABODHA AI © Hospital-Grade Clinical Intelligence Platform")
