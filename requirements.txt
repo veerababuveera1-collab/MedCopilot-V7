@@ -4,3 +4,8 @@ faiss-cpu
 pypdf
 groq
 numpy
+pytesseract
+pdf2image
+Pillow
+
+
