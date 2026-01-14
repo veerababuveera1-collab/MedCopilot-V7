@@ -1,9 +1,11 @@
 # ======================================================
 # ĀROGYABODHA AI — Hospital Clinical Intelligence Platform
 # ======================================================
+# FINAL PRODUCTION BUILD (OTP + Governance + Evidence)
+# ======================================================
 
 import streamlit as st
-import os, json, pickle, datetime, re
+import os, json, pickle, datetime, re, random
 import numpy as np
 import faiss
 import pandas as pd
@@ -29,33 +31,6 @@ st.set_page_config(
 )
 
 # ======================================================
-# PREMIUM LOGIN CSS
-# ======================================================
-def load_login_css():
-    st.markdown("""
-    <style>
-    body { background-color: #020617; }
-    .login-card {
-        background: #020617;
-        border-radius: 18px;
-        padding: 40px;
-        width: 420px;
-        box-shadow: 0px 0px 40px rgba(0,0,0,0.6);
-    }
-    .login-title { font-size: 28px; font-weight: 700; color: #e5e7eb; }
-    .login-subtitle { color: #94a3b8; margin-bottom: 25px; }
-    .login-footer { color: #64748b; font-size: 12px; margin-top: 20px; text-align: center; }
-    .hero-panel {
-        background-image: url("https://images.unsplash.com/photo-1586773860418-d37222d8fce3");
-        background-size: cover;
-        background-position: center;
-        border-radius: 18px;
-        height: 520px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-# ======================================================
 # DISCLAIMER
 # ======================================================
 st.info(
@@ -77,10 +52,10 @@ AUDIT_LOG = "audit_log.json"
 os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
+# Seed demo users
 if not os.path.exists(USERS_DB):
     json.dump({
-        "doctor1": {"password": "doctor123", "role": "Doctor"},
-        "researcher1": {"password": "research123", "role": "Researcher"}
+        "doctor1": {"password": "doctor123", "email": "doctor1@hospital.com", "role": "Doctor"}
     }, open(USERS_DB, "w"), indent=2)
 
 # ======================================================
@@ -90,6 +65,8 @@ defaults = {
     "logged_in": False,
     "username": None,
     "role": None,
+    "otp": None,
+    "otp_verified": False,
     "index": None,
     "documents": [],
     "sources": [],
@@ -115,47 +92,86 @@ def audit(event, meta=None):
     json.dump(rows, open(AUDIT_LOG, "w"), indent=2)
 
 # ======================================================
-# SAFE AI WRAPPER
+# SAFE AI WRAPPER (Governance Layer)
 # ======================================================
 def safe_ai_call(prompt):
     try:
         result = external_research_answer(prompt)
-        return result["answer"] if result and "answer" in result else "⚠ AI returned empty response."
+        if not result or "answer" not in result:
+            return "⚠ AI returned empty response."
+        return result["answer"]
     except Exception as e:
         audit("ai_failure", {"error": str(e)})
-        return "⚠ AI service temporarily unavailable. Governance block applied."
+        return (
+            "⚠ AI service temporarily unavailable.\n\n"
+            "Hospital Governance Policy:\n"
+            "• No hallucinated content\n"
+            "• No unsafe response\n"
+            "• Please retry later"
+        )
 
 # ======================================================
-# PREMIUM LOGIN UI
+# LOGIN + OTP AUTH
 # ======================================================
 def login_ui():
-    load_login_css()
-    col1, col2 = st.columns([1,1])
+    st.markdown("## 🔐 Doctor Secure Login")
 
-    with col1:
-        st.markdown('<div class="login-card">', unsafe_allow_html=True)
-        st.markdown('<div class="login-title">🧠 ĀROGYABODHA AI</div>', unsafe_allow_html=True)
-        st.markdown('<div class="login-subtitle">Hospital Clinical Intelligence Platform</div>', unsafe_allow_html=True)
+    tab1, tab2 = st.tabs(["🔑 Password Login", "📲 OTP Login"])
 
-        username = st.text_input("Doctor ID")
-        password = st.text_input("Password", type="password")
+    # -------- Password Login --------
+    with tab1:
+        username = st.text_input("Username", placeholder="doctor1")
+        password = st.text_input("Password", type="password", placeholder="doctor123")
 
-        if st.button("🔐 Secure Login", use_container_width=True):
+        if st.button("Login with Password"):
             users = json.load(open(USERS_DB))
             if username in users and users[username]["password"] == password:
                 st.session_state.logged_in = True
                 st.session_state.username = username
                 st.session_state.role = users[username]["role"]
-                audit("login", {"user": username})
+                audit("login_password", {"user": username})
+                st.success("Login successful")
                 st.rerun()
             else:
                 st.error("Invalid credentials")
 
-        st.markdown('<div class="login-footer">Hospital-grade secure access · Audit logged</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+    # -------- OTP Login --------
+    with tab2:
+        email = st.text_input("Registered Email", placeholder="doctor1@hospital.com")
 
-    with col2:
-        st.markdown('<div class="hero-panel"></div>', unsafe_allow_html=True)
+        if st.button("Send OTP"):
+            otp = random.randint(100000, 999999)
+            st.session_state.otp = str(otp)
+            st.session_state.otp_email = email
+
+            # Simulated OTP (replace with email API)
+            st.success(f"OTP sent to email (Demo OTP: {otp})")
+
+        otp_input = st.text_input("Enter OTP")
+
+        if st.button("Verify OTP"):
+            if otp_input == st.session_state.get("otp"):
+                users = json.load(open(USERS_DB))
+                for u, data in users.items():
+                    if data["email"] == st.session_state.otp_email:
+                        st.session_state.logged_in = True
+                        st.session_state.username = u
+                        st.session_state.role = data["role"]
+                        audit("login_otp", {"user": u})
+                        st.success("OTP verified. Login successful.")
+                        st.rerun()
+                        return
+                st.error("Email not registered")
+            else:
+                st.error("Invalid OTP")
+
+def logout_ui():
+    if st.sidebar.button("Logout"):
+        audit("logout", {"user": st.session_state.username})
+        st.session_state.logged_in = False
+        st.session_state.username = None
+        st.session_state.role = None
+        st.rerun()
 
 if not st.session_state.logged_in:
     login_ui()
@@ -167,6 +183,7 @@ if not st.session_state.logged_in:
 @st.cache_resource
 def load_embedder():
     return SentenceTransformer("all-MiniLM-L6-v2")
+
 embedder = load_embedder()
 
 # ======================================================
@@ -206,8 +223,9 @@ def extract_text_from_pdf(pdf_path):
     try:
         reader = PdfReader(pdf_path)
         for page in reader.pages:
-            if page.extract_text():
-                text += page.extract_text() + "\n"
+            t = page.extract_text()
+            if t:
+                text += t + "\n"
     except:
         pass
 
@@ -222,7 +240,7 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 # ======================================================
-# LAB PARSER (FIXED)
+# LAB PARSER
 # ======================================================
 LAB_RULES = {
     "Total Bilirubin": (0.3, 1.2, "mg/dL"),
@@ -235,17 +253,21 @@ LAB_RULES = {
 def extract_lab_values(text):
     values = {}
     for test in LAB_RULES:
-        pattern = rf"{test}.*?(\d+\.?\d*)"
-        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
-        if match:
-            values[test] = float(match.group(1))
+        m = re.search(test + r".*?(\d+\.?\d*)", text, re.IGNORECASE)
+        if m:
+            values[test] = float(m.group(1))
     return values
 
 def generate_lab_summary(values):
     summary, alerts = [], []
     for test, val in values.items():
         low, high, unit = LAB_RULES[test]
-        status = "🟢 NORMAL" if low <= val <= high else "🔴 HIGH" if val > high else "🟡 LOW"
+        if val < low:
+            status = "🟡 LOW"
+        elif val > high:
+            status = "🔴 HIGH"
+        else:
+            status = "🟢 NORMAL"
         summary.append((test, val, unit, status))
 
         if test == "Total Bilirubin" and val >= 5:
@@ -257,11 +279,31 @@ def generate_lab_summary(values):
 # SIDEBAR
 # ======================================================
 st.sidebar.markdown(f"👨‍⚕️ User: **{st.session_state.username}**")
+logout_ui()
 
-if st.sidebar.button("Logout"):
-    audit("logout")
-    st.session_state.logged_in = False
-    st.rerun()
+st.sidebar.subheader("📁 Medical Library")
+
+uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
+if uploads:
+    for f in uploads:
+        with open(os.path.join(PDF_FOLDER, f.name), "wb") as out:
+            out.write(f.getbuffer())
+    st.sidebar.success("PDFs uploaded")
+
+if st.sidebar.button("🔄 Build Index"):
+    st.session_state.index, st.session_state.documents, st.session_state.sources = build_index()
+    st.session_state.index_ready = True
+    st.sidebar.success("Evidence Index Built")
+
+if os.path.exists(INDEX_FILE):
+    st.sidebar.markdown("🟢 Index Status: READY")
+else:
+    st.sidebar.markdown("🔴 Index Status: NOT BUILT")
+
+st.sidebar.markdown("#### 📚 Library Files")
+for pdf in os.listdir(PDF_FOLDER):
+    if pdf.endswith(".pdf"):
+        st.sidebar.write("📄 " + pdf)
 
 module = st.sidebar.radio("Select Module", [
     "Clinical Research Copilot",
@@ -279,16 +321,57 @@ st.caption("Hospital-grade • Evidence-locked • OCR-enabled • Governance en
 # CLINICAL RESEARCH COPILOT
 # ======================================================
 if module == "Clinical Research Copilot":
+    st.subheader("🔬 Clinical Research Copilot")
+
     query = st.text_input("Ask a clinical research question")
-    if st.button("Analyze") and query:
-        answer = safe_ai_call(query)
-        st.write(answer)
+    mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
+
+    if st.button("🚀 Analyze") and query:
+
+        tabs = ["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"]
+        t1, t2, t3, t4 = st.tabs(tabs)
+
+        with t1:
+            if not st.session_state.index_ready:
+                st.error("Hospital index not built.")
+            else:
+                qemb = embedder.encode([query])
+                _, I = st.session_state.index.search(np.array(qemb), 5)
+                context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
+                sources = [st.session_state.sources[i] for i in I[0]]
+
+                prompt = f"Hospital Evidence:\n{context}\n\nDoctor Question:\n{query}"
+                answer = safe_ai_call(prompt)
+                st.success("Hospital Evidence Answer")
+                st.write(answer)
+
+                st.markdown("### 📑 Evidence Sources")
+                for s in sources:
+                    st.info(s)
+
+        with t2:
+            answer = safe_ai_call(query)
+            st.write(answer)
+
+        with t3:
+            if "fda" in answer.lower():
+                st.success("FDA-approved therapy detected")
+            else:
+                st.info("No FDA outcome keyword detected.")
+
+        with t4:
+            for pdf in os.listdir(PDF_FOLDER):
+                if pdf.endswith(".pdf"):
+                    st.write("📄", pdf)
 
 # ======================================================
 # LAB REPORT INTELLIGENCE
 # ======================================================
 if module == "Lab Report Intelligence":
+    st.subheader("🧪 Lab Report Intelligence")
+
     lab_file = st.file_uploader("Upload Lab Report (PDF)", type=["pdf"])
+
     if lab_file:
         with open("lab_report.pdf", "wb") as f:
             f.write(lab_file.getbuffer())
@@ -299,12 +382,13 @@ if module == "Lab Report Intelligence":
 
         st.markdown("### 🧾 Smart Lab Summary")
         if not summary:
-            st.error("RESULT values not detected. PDF format may vary.")
+            st.warning("Unable to auto-detect RESULT values.")
         else:
             for t,v,u,s in summary:
                 st.write(f"{t}: {v} {u} — {s}")
 
         if alerts:
+            st.markdown("### 🚨 ICU Alerts")
             for a in alerts:
                 st.error(a)
 
@@ -312,9 +396,12 @@ if module == "Lab Report Intelligence":
 # AUDIT TRAIL
 # ======================================================
 if module == "Audit Trail":
+    st.subheader("🕒 Audit Trail")
     if os.path.exists(AUDIT_LOG):
         df = pd.DataFrame(json.load(open(AUDIT_LOG)))
         st.dataframe(df, use_container_width=True)
+    else:
+        st.info("No audit logs yet.")
 
 # ======================================================
 # FOOTER
