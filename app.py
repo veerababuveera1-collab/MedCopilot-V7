@@ -8,7 +8,7 @@ from pypdf import PdfReader
 from external_research import external_research_answer
 
 # ======================================================
-# WOW THEME & UI
+# PAGE CONFIG + WOW UI
 # ======================================================
 st.set_page_config(
     page_title="ĀROGYABODHA AI — Clinical Intelligence Command Center",
@@ -18,30 +18,17 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-body {
-    background: radial-gradient(circle at top, #020617, #020617);
-    color: #e5e7eb;
-}
-.card {
-    background: rgba(255,255,255,0.04);
-    border-radius: 18px;
-    padding: 20px;
-    box-shadow: 0 0 40px rgba(0,200,255,0.15);
-    margin-bottom: 20px;
-}
-.alert {
-    background: linear-gradient(135deg, #ff004c, #ff6a00);
-    padding: 15px;
-    border-radius: 14px;
-    font-weight: bold;
-}
-.success {
-    background: linear-gradient(135deg, #00ff9c, #00c2ff);
-    padding: 15px;
-    border-radius: 14px;
-    font-weight: bold;
-    color: black;
-}
+body { background: radial-gradient(circle at top, #020617, #020617); color: #e5e7eb; }
+.card { background: rgba(255,255,255,0.04); border-radius: 18px; padding: 20px;
+        box-shadow: 0 0 40px rgba(0,200,255,0.15); margin-bottom: 20px; }
+.alert { background: linear-gradient(135deg, #ff004c, #ff6a00); padding: 15px;
+         border-radius: 14px; font-weight: bold; }
+.success { background: linear-gradient(135deg, #00ff9c, #00c2ff); padding: 15px;
+           border-radius: 14px; font-weight: bold; color: black; }
+.warn { background: linear-gradient(135deg, #ffe259, #ffa751); padding: 15px;
+        border-radius: 14px; font-weight: bold; color: black; }
+.normal { background: linear-gradient(135deg, #7CFFCB, #00ff9c); padding: 15px;
+          border-radius: 14px; font-weight: bold; color: black; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -62,13 +49,12 @@ VECTOR_FOLDER = "vector_cache"
 INDEX_FILE = f"{VECTOR_FOLDER}/index.faiss"
 CACHE_FILE = f"{VECTOR_FOLDER}/cache.pkl"
 ANALYTICS_FILE = "analytics_log.json"
-FDA_DB = "fda_registry.json"
 
 os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
 # ======================================================
-# MODEL
+# AI MODEL
 # ======================================================
 @st.cache_resource
 def load_embedder():
@@ -77,130 +63,79 @@ def load_embedder():
 embedder = load_embedder()
 
 # ======================================================
-# FDA REGISTRY
+# SMART LAB RULE ENGINE
 # ======================================================
-if not os.path.exists(FDA_DB):
-    json.dump({
-        "temozolomide": "FDA Approved",
-        "bevacizumab": "FDA Approved",
-        "car-t": "Experimental / Trial Only"
-    }, open(FDA_DB, "w"))
-
-FDA_REGISTRY = json.load(open(FDA_DB))
-
-# ======================================================
-# HELPERS
-# ======================================================
-def log_query(query, mode):
-    logs = []
-    if os.path.exists(ANALYTICS_FILE):
-        logs = json.load(open(ANALYTICS_FILE))
-    logs.append({
-        "query": query,
-        "mode": mode,
-        "time": str(datetime.datetime.now())
-    })
-    json.dump(logs, open(ANALYTICS_FILE, "w"), indent=2)
-
-def semantic_similarity(a, b):
-    ea = embedder.encode([a])[0]
-    eb = embedder.encode([b])[0]
-    return float(np.dot(ea, eb) / (np.linalg.norm(ea) * np.linalg.norm(eb)))
-
-def semantic_evidence_level(answer, context):
-    sim = semantic_similarity(answer, context)
-    if sim >= 0.55:
-        return "STRONG", int(sim * 100)
-    elif sim >= 0.25:
-        return "PARTIAL", int(sim * 100)
-    else:
-        return "NONE", 0
-
-def confidence_score(answer, n_sources):
-    score = 60
-    if n_sources >= 3: score += 15
-    if "fda" in answer.lower(): score += 10
-    if any(x in answer.lower() for x in ["survival", "mortality", "outcome"]):
-        score += 10
-    return min(score, 95)
-
-def extract_outcomes(text):
-    rows = []
-    for d, s in FDA_REGISTRY.items():
-        if d in text.lower():
-            rows.append({"Treatment": d.title(), "FDA Status": s})
-    return pd.DataFrame(rows)
+LAB_RULES = {
+    "Hemoglobin": {"low": 13, "high": 17, "unit": "g/dL"},
+    "WBC": {"low": 4000, "high": 10000, "unit": "/cumm"},
+    "Platelets": {"low": 150000, "high": 410000, "unit": "/cumm"},
+    "Creatinine": {"low": 0.7, "high": 1.3, "unit": "mg/dL"},
+    "Total Bilirubin": {"low": 0.3, "high": 1.2, "unit": "mg/dL"},
+    "SGPT": {"low": 0, "high": 50, "unit": "U/L"},
+    "SGOT": {"low": 0, "high": 50, "unit": "U/L"},
+    "GGT": {"low": 0, "high": 55, "unit": "U/L"}
+}
 
 # ======================================================
-# LAB ENGINE
+# LAB EXTRACTION ENGINE (CBC + LFT + RFT)
 # ======================================================
 def extract_lab_values(text):
     patterns = {
+        "Hemoglobin": r"Hemoglobin.*?(\d+\.?\d*)",
+        "WBC": r"(WBC|TLC|Total Leukocyte Count).*?(\d+)",
+        "Platelets": r"Platelet.*?(\d+)",
+        "Creatinine": r"Creatinine.*?(\d+\.?\d*)",
         "Total Bilirubin": r"Total Bilirubin.*?(\d+\.?\d*)",
-        "Direct Bilirubin": r"Direct Bilirubin.*?(\d+\.?\d*)",
-        "SGPT": r"SGPT.*?(\d+)",
-        "SGOT": r"SGOT.*?(\d+)",
-        "GGT": r"Gamma.*Transferase.*?(\d+)"
+        "SGPT": r"(SGPT|ALT).*?(\d+)",
+        "SGOT": r"(SGOT|AST).*?(\d+)",
+        "GGT": r"(GGT|Gamma).*?(\d+)"
     }
+
     results = {}
-    for k, p in patterns.items():
-        m = re.search(p, text, re.IGNORECASE)
-        if m:
-            results[k] = m.group(1)
+    for test, pattern in patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            value = match.groups()[-1]
+            results[test] = float(value)
+
     return results
 
-def interpret_labs(values):
+# ======================================================
+# MEDICAL DECISION LOGIC
+# ======================================================
+def classify_value(test, value):
+    ref = LAB_RULES[test]
+    if value < ref["low"]:
+        return "LOW"
+    elif value > ref["high"]:
+        return "HIGH"
+    else:
+        return "NORMAL"
+
+def generate_smart_summary(values):
     summary = []
-    if "Total Bilirubin" in values and float(values["Total Bilirubin"]) > 1.2:
-        summary.append("🔴 Elevated bilirubin — Jaundice risk")
-    if "SGPT" in values and float(values["SGPT"]) > 50:
-        summary.append("🔴 SGPT high — Liver injury")
-    if "SGOT" in values and float(values["SGOT"]) > 50:
-        summary.append("🔴 SGOT high — Liver inflammation")
-    if "GGT" in values and float(values["GGT"]) > 55:
-        summary.append("🔴 GGT high — Alcohol/Biliary involvement")
-    return summary
+    alerts = []
 
-# ======================================================
-# HOSPITAL AI
-# ======================================================
-def hospital_answer(query, context):
-    prompt = f"""
-You are a Hospital Clinical AI.
+    for test, value in values.items():
+        status = classify_value(test, value)
+        unit = LAB_RULES[test]["unit"]
 
-Use ONLY hospital evidence.
-No hallucination.
-If evidence insufficient, say so.
+        if status == "HIGH":
+            summary.append((test, value, unit, "🔴 HIGH"))
+        elif status == "LOW":
+            summary.append((test, value, unit, "🟡 LOW"))
+        else:
+            summary.append((test, value, unit, "🟢 NORMAL"))
 
-Hospital Evidence:
-{context}
+        # ICU rules
+        if test == "Creatinine" and value > 3:
+            alerts.append("🚨 CRITICAL: Acute Renal Failure risk")
+        if test == "Total Bilirubin" and value > 5:
+            alerts.append("🚨 CRITICAL: Severe Jaundice – ICU required")
+        if test == "Platelets" and value < 50000:
+            alerts.append("🚨 CRITICAL: Bleeding risk")
 
-Doctor Query:
-{query}
-"""
-    return external_research_answer(prompt).get("answer", "")
-
-# ======================================================
-# INDEX
-# ======================================================
-def build_index():
-    docs, srcs = [], []
-    for pdf in os.listdir(PDF_FOLDER):
-        if pdf.endswith(".pdf"):
-            reader = PdfReader(os.path.join(PDF_FOLDER, pdf))
-            for i, p in enumerate(reader.pages[:200]):
-                t = p.extract_text()
-                if t and len(t) > 100:
-                    docs.append(t)
-                    srcs.append(f"{pdf} – Page {i+1}")
-    if not docs:
-        return None, [], []
-    emb = embedder.encode(docs)
-    idx = faiss.IndexFlatL2(emb.shape[1])
-    idx.add(np.array(emb))
-    faiss.write_index(idx, INDEX_FILE)
-    pickle.dump({"documents": docs, "sources": srcs}, open(CACHE_FILE, "wb"))
-    return idx, docs, srcs
+    return summary, alerts
 
 # ======================================================
 # SIDEBAR
@@ -214,10 +149,6 @@ if uploads:
         open(os.path.join(PDF_FOLDER, f.name), "wb").write(f.getbuffer())
     st.sidebar.success("PDFs uploaded")
 
-if st.sidebar.button("🔄 Build Index"):
-    st.session_state.index, st.session_state.documents, st.session_state.sources = build_index()
-    st.sidebar.success("Index built successfully")
-
 st.sidebar.divider()
 app_mode = st.sidebar.radio("Select Module", ["Clinical Research Copilot", "Lab Report Intelligence"])
 
@@ -227,36 +158,7 @@ app_mode = st.sidebar.radio("Select Module", ["Clinical Research Copilot", "Lab 
 st.markdown("<div class='card'><h1>🧠 ĀROGYABODHA AI — Clinical Intelligence Command Center</h1></div>", unsafe_allow_html=True)
 
 # ======================================================
-# CLINICAL RESEARCH COPILOT
-# ======================================================
-if app_mode == "Clinical Research Copilot":
-
-    st.markdown("<div class='card'><h2>🔬 Clinical Research Copilot</h2></div>", unsafe_allow_html=True)
-
-    query = st.text_input("Ask a clinical research question")
-    mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
-
-    if st.button("🚀 Analyze Research"):
-        log_query(query, mode)
-
-        if mode in ["Hospital AI", "Hybrid AI"]:
-            qemb = embedder.encode([query])
-            _, I = st.session_state.index.search(np.array(qemb), 5)
-            context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
-            raw = hospital_answer(query, context)
-
-            level, coverage = semantic_evidence_level(raw, context)
-            conf = confidence_score(raw, len(I[0]))
-
-            st.markdown(f"<div class='success'>Confidence: {conf}% | Evidence Coverage: {coverage}%</div>", unsafe_allow_html=True)
-            st.write(raw)
-
-        if mode in ["Global AI", "Hybrid AI"]:
-            st.markdown("<div class='card'><h3>🌍 Global Medical Research</h3></div>", unsafe_allow_html=True)
-            st.write(external_research_answer(query).get("answer", ""))
-
-# ======================================================
-# LAB REPORT INTELLIGENCE
+# LAB REPORT INTELLIGENCE (UPGRADED)
 # ======================================================
 if app_mode == "Lab Report Intelligence":
 
@@ -275,14 +177,22 @@ if app_mode == "Lab Report Intelligence":
 
         values = extract_lab_values(report_text)
 
+        summary, alerts = generate_smart_summary(values)
+
         st.markdown("<div class='card'><h3>🧾 Smart Lab Summary</h3></div>", unsafe_allow_html=True)
-        st.json(values)
 
-        interpretation = interpret_labs(values)
+        for test, value, unit, status in summary:
+            if "HIGH" in status:
+                st.markdown(f"<div class='alert'>{test}: {value} {unit} — {status}</div>", unsafe_allow_html=True)
+            elif "LOW" in status:
+                st.markdown(f"<div class='warn'>{test}: {value} {unit} — {status}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='normal'>{test}: {value} {unit} — {status}</div>", unsafe_allow_html=True)
 
-        st.markdown("<div class='card'><h3>🩺 Clinical Interpretation</h3></div>", unsafe_allow_html=True)
-        for line in interpretation:
-            st.markdown(f"<div class='alert'>{line}</div>", unsafe_allow_html=True)
+        if alerts:
+            st.markdown("<div class='card'><h3>🚨 ICU Red Alerts</h3></div>", unsafe_allow_html=True)
+            for a in alerts:
+                st.markdown(f"<div class='alert'>{a}</div>", unsafe_allow_html=True)
 
         lab_question = st.text_input("Ask ĀROGYABODHA AI")
 
