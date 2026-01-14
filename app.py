@@ -2,7 +2,7 @@
 # ĀROGYABODHA AI — Hospital Clinical Intelligence Platform
 # ======================================================
 # Production Build:
-# - Secure Login (rerun-safe)
+# - Modern Secure Login (CubeFactory style)
 # - Clinical Research Copilot
 # - Hospital Evidence Engine (FAISS)
 # - 3 AI Modes (Hospital / Global / Hybrid)
@@ -11,7 +11,7 @@
 # - Smart Lab Summary + ICU Alerts
 # - Audit Trail
 # - Governance Safe AI Wrapper
-# - Clean Sidebar (no library list, no help)
+# - Clean Sidebar
 # ======================================================
 
 import streamlit as st
@@ -117,33 +117,77 @@ def safe_ai_call(prompt, mode="AI"):
         }
 
 # ======================================================
-# AUTH
+# MODERN LOGIN UI (CubeFactory Style)
 # ======================================================
 def login_ui():
-    st.markdown("## 🏥 ĀROGYABODHA AI Hospital Login")
+    st.markdown("""
+    <style>
+    body { background-color: #f6f7fb; }
+    .login-container {
+        max-width: 1100px;
+        margin: auto;
+        margin-top: 80px;
+        background: white;
+        border-radius: 14px;
+        box-shadow: 0px 10px 40px rgba(0,0,0,0.08);
+        display: flex;
+        overflow: hidden;
+    }
+    .login-left { width: 50%; padding: 60px; }
+    .login-right {
+        width: 50%;
+        background-image: url("https://images.unsplash.com/photo-1526256262350-7da7584cf5eb");
+        background-size: cover;
+        background-position: center;
+        position: relative;
+    }
+    .login-overlay {
+        position: absolute;
+        bottom: 40px;
+        left: 40px;
+        color: white;
+    }
+    .login-title { font-size: 32px; font-weight: 700; margin-bottom: 10px; }
+    .login-subtitle { color: #666; margin-bottom: 30px; }
+    </style>
+    """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns([2,1])
-    with col1:
-        st.markdown("### Secure Clinical Access Portal")
-        st.markdown("✔ Evidence Locked  \n✔ Governance Ready  \n✔ ICU Intelligence  \n✔ Clinical AI")
+    st.markdown("""
+    <div class="login-container">
+        <div class="login-left">
+            <div class="login-title">Welcome back</div>
+            <div class="login-subtitle">Please enter your details</div>
+    """, unsafe_allow_html=True)
 
-    with col2:
-        with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submit = st.form_submit_button("🔐 Login")
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Sign in")
 
-        if submit:
-            users = json.load(open(USERS_DB))
-            if username in users and users[username]["password"] == password:
-                st.session_state.logged_in = True
-                st.session_state.username = username
-                st.session_state.role = users[username]["role"]
-                audit("login", {"user": username})
-                st.success("Login successful")
-                st.rerun()
-            else:
-                st.error("Invalid username or password")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("""
+        <div class="login-right">
+            <div class="login-overlay">
+                <h2>ĀROGYABODHA AI</h2>
+                <p>Hospital Clinical Intelligence Platform</p>
+                <p>Evidence Locked • Governance Ready • ICU Intelligence</p>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if submitted:
+        users = json.load(open(USERS_DB))
+        if username in users and users[username]["password"] == password:
+            st.session_state.logged_in = True
+            st.session_state.username = username
+            st.session_state.role = users[username]["role"]
+            audit("login", {"user": username})
+            st.success("Login successful")
+            st.rerun()
+        else:
+            st.error("❌ Invalid username or password")
 
 def logout_ui():
     if st.sidebar.button("Logout"):
