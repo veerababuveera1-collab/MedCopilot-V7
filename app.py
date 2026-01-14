@@ -198,7 +198,7 @@ if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
     st.session_state.index_ready = True
 
 # ======================================================
-# OCR ENGINE (Safe)
+# OCR ENGINE (Safe fallback)
 # ======================================================
 def extract_text_from_pdf(pdf_path):
     text = ""
@@ -260,7 +260,7 @@ LAB_RULES = {
 def extract_lab_values(text):
     values = {}
     lines = [l.strip() for l in text.split("\n") if l.strip()]
-    for i, line in enumerate(lines):
+    for line in lines:
         for test in LAB_RULES:
             if test.lower() in line.lower():
                 nums = re.findall(r"\b\d+\.?\d*\b", line)
@@ -288,7 +288,7 @@ def generate_lab_summary(values):
     return summary, alerts
 
 # ======================================================
-# SIDEBAR (Governance)
+# SIDEBAR
 # ======================================================
 st.sidebar.markdown(f"👨‍⚕️ User: **{st.session_state.username}**")
 logout_ui()
@@ -343,7 +343,7 @@ st.markdown("## 🧠 ĀROGYABODHA AI — Hospital Clinical Intelligence Platform
 st.caption("Hospital-grade • Evidence-locked • OCR-enabled • Governance enabled")
 
 # ======================================================
-# CLINICAL RESEARCH COPILOT (Mode Isolated)
+# CLINICAL RESEARCH COPILOT
 # ======================================================
 if module == "Clinical Research Copilot":
     st.subheader("🔬 Clinical Research Copilot")
@@ -354,7 +354,6 @@ if module == "Clinical Research Copilot":
     if st.button("🚀 Analyze") and query:
         audit("clinical_query", {"query": query, "mode": mode})
 
-        # Mode Isolation
         if mode == "Hospital AI":
             tabs = ["🏥 Hospital", "📚 Library"]
         elif mode == "Global AI":
@@ -365,7 +364,6 @@ if module == "Clinical Research Copilot":
         tab_objs = st.tabs(tabs)
         tab_map = dict(zip(tabs, tab_objs))
 
-        # ---------- Hospital AI ----------
         if "🏥 Hospital" in tab_map:
             with tab_map["🏥 Hospital"]:
                 if not st.session_state.index_ready:
@@ -373,7 +371,6 @@ if module == "Clinical Research Copilot":
                 else:
                     qemb = embedder.encode([query])
                     _, I = st.session_state.index.search(np.array(qemb), 5)
-
                     context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
                     sources = [st.session_state.sources[i] for i in I[0]]
 
@@ -411,13 +408,11 @@ Doctor Question:
                             for s in sources:
                                 st.info(s)
 
-        # ---------- Global AI ----------
         if "🌍 Global" in tab_map:
             with tab_map["🌍 Global"]:
                 resp = safe_ai_call(query, mode="Global AI")
                 st.write(resp["answer"])
 
-        # ---------- Outcomes ----------
         if "🧪 Outcomes" in tab_map:
             with tab_map["🧪 Outcomes"]:
                 if "fda" in resp["answer"].lower():
@@ -425,7 +420,6 @@ Doctor Question:
                 else:
                     st.info("No FDA outcome keyword detected.")
 
-        # ---------- Library ----------
         if "📚 Library" in tab_map:
             with tab_map["📚 Library"]:
                 for pdf in os.listdir(PDF_FOLDER):
@@ -433,7 +427,7 @@ Doctor Question:
                         st.write("📄", pdf)
 
 # ======================================================
-# LAB REPORT INTELLIGENCE (OCR Enabled)
+# LAB REPORT INTELLIGENCE
 # ======================================================
 if module == "Lab Report Intelligence":
     st.subheader("🧪 Lab Report Intelligence")
