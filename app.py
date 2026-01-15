@@ -3,7 +3,7 @@
 # ======================================================
 
 import streamlit as st
-import os, json, pickle, datetime, re
+import os, json, pickle, datetime
 import numpy as np
 import faiss
 import pandas as pd
@@ -18,7 +18,6 @@ try:
     from pdf2image import convert_from_path
 except:
     OCR_AVAILABLE = False
-
 
 # ======================================================
 # PAGE CONFIG
@@ -74,9 +73,8 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-
 # ======================================================
-# AUDIT
+# AUDIT SYSTEM
 # ======================================================
 def audit(event, meta=None):
     rows = []
@@ -89,7 +87,6 @@ def audit(event, meta=None):
         "meta": meta or {}
     })
     json.dump(rows, open(AUDIT_LOG, "w"), indent=2)
-
 
 # ======================================================
 # SAFE AI WRAPPER
@@ -104,67 +101,142 @@ def safe_ai_call(prompt, mode="AI"):
         audit("ai_failure", {"mode": mode, "error": str(e)})
         return {"status": "down", "answer": "⚠ AI service unavailable. Governance block applied."}
 
-
 # ======================================================
-# MODERN LOGIN UI (CubeFactory Style)
+# WOW LOGIN UI
 # ======================================================
 def login_ui():
     st.markdown("""
     <style>
-    body { background-color: #0f172a; }
-
-    .login-container {
-        max-width: 1100px;
-        margin: auto;
-        margin-top: 70px;
-        background: white;
-        border-radius: 16px;
-        box-shadow: 0px 20px 80px rgba(0,0,0,0.5);
-        display: flex;
-        overflow: hidden;
+    body {
+        background: radial-gradient(circle at top, #020617 0%, #020617 60%, #000000 100%);
+        font-family: 'Segoe UI', sans-serif;
     }
 
-    .login-left { width: 50%; padding: 70px; }
+    .login-wrapper {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 95vh;
+    }
+
+    .login-card {
+        width: 1200px;
+        height: 620px;
+        display: flex;
+        border-radius: 28px;
+        overflow: hidden;
+        background: rgba(255,255,255,0.06);
+        backdrop-filter: blur(30px);
+        box-shadow: 0 0 120px rgba(56,189,248,0.35);
+        border: 1px solid rgba(255,255,255,0.15);
+    }
+
+    .login-left {
+        width: 50%;
+        padding: 80px;
+        color: white;
+    }
+
+    .login-title {
+        font-size: 44px;
+        font-weight: 900;
+        margin-bottom: 10px;
+        background: linear-gradient(90deg,#38bdf8,#22d3ee,#0ea5e9);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        letter-spacing: 1px;
+    }
+
+    .login-subtitle {
+        color: #cbd5f5;
+        margin-bottom: 60px;
+        font-size: 18px;
+        line-height: 1.6;
+    }
+
     .login-right {
         width: 50%;
-        background-image: url("https://images.unsplash.com/photo-1581092919535-7f1b33b4c8d8");
+        background-image: url("https://images.unsplash.com/photo-1576091160399-112ba8d25d1d");
         background-size: cover;
         background-position: center;
         position: relative;
     }
 
-    .login-overlay {
+    .overlay {
         position: absolute;
-        bottom: 50px;
-        left: 50px;
+        inset: 0;
+        background: linear-gradient(120deg,rgba(2,6,23,0.95),rgba(2,6,23,0.4));
+    }
+
+    .brand-box {
+        position: absolute;
+        bottom: 70px;
+        left: 70px;
         color: white;
     }
 
-    .login-title { font-size: 36px; font-weight: 800; margin-bottom: 10px; }
-    .login-subtitle { color: #64748b; margin-bottom: 40px; font-size: 17px; }
+    .brand-title {
+        font-size: 38px;
+        font-weight: 900;
+        letter-spacing: 1px;
+    }
+
+    .brand-sub {
+        margin-top: 12px;
+        color: #bae6fd;
+        font-size: 18px;
+        line-height: 1.6;
+    }
+
+    .stTextInput input {
+        background: rgba(255,255,255,0.08);
+        border-radius: 14px;
+        padding: 16px;
+        color: white;
+        border: 1px solid rgba(255,255,255,0.25);
+    }
+
+    .stButton button {
+        width: 100%;
+        padding: 18px;
+        border-radius: 16px;
+        font-size: 18px;
+        font-weight: 800;
+        background: linear-gradient(90deg,#38bdf8,#22d3ee);
+        color: #020617;
+        border: none;
+        margin-top: 30px;
+        box-shadow: 0 0 40px rgba(34,211,238,0.7);
+    }
     </style>
     """, unsafe_allow_html=True)
 
     st.markdown("""
-    <div class="login-container">
-        <div class="login-left">
-            <div class="login-title">Welcome back</div>
-            <div class="login-subtitle">Secure Hospital Access Portal</div>
+    <div class="login-wrapper">
+        <div class="login-card">
+            <div class="login-left">
+                <div class="login-title">ĀROGYABODHA AI</div>
+                <div class="login-subtitle">
+                    Hospital Clinical Intelligence Platform<br>
+                    Secure Medical AI Command Center
+                </div>
     """, unsafe_allow_html=True)
 
     with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("🔐 Sign in")
-
-    st.markdown("</div>", unsafe_allow_html=True)
+        username = st.text_input("Doctor / Researcher ID")
+        password = st.text_input("Secure Access Key", type="password")
+        submitted = st.form_submit_button("🚀 Enter Clinical AI Platform")
 
     st.markdown("""
-        <div class="login-right">
-            <div class="login-overlay">
-                <h2>ĀROGYABODHA AI</h2>
-                <p>Hospital Clinical Intelligence Platform</p>
-                <p>Evidence Locked • Governance Ready • ICU Intelligence</p>
+            </div>
+            <div class="login-right">
+                <div class="overlay"></div>
+                <div class="brand-box">
+                    <div class="brand-title">Hospital AI Core</div>
+                    <div class="brand-sub">
+                        Evidence Locked • Governance Ready • ICU Intelligence
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -177,12 +249,14 @@ def login_ui():
             st.session_state.username = username
             st.session_state.role = users[username]["role"]
             audit("login", {"user": username})
-            st.success("Login successful")
+            st.success("✅ Secure Hospital Access Granted")
             st.rerun()
         else:
-            st.error("❌ Invalid username or password")
+            st.error("❌ Access Denied — Invalid Credentials")
 
-
+# ======================================================
+# LOGOUT
+# ======================================================
 def logout_ui():
     if st.sidebar.button("Logout"):
         audit("logout", {"user": st.session_state.username})
@@ -191,11 +265,12 @@ def logout_ui():
         st.session_state.role = None
         st.rerun()
 
-
+# ======================================================
+# AUTH GATE
+# ======================================================
 if not st.session_state.logged_in:
     login_ui()
     st.stop()
-
 
 # ======================================================
 # MODEL
@@ -205,7 +280,6 @@ def load_embedder():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 embedder = load_embedder()
-
 
 # ======================================================
 # FAISS INDEX
@@ -220,8 +294,10 @@ def build_index():
                 if t and len(t) > 100:
                     docs.append(t)
                     srcs.append(f"{pdf} — Page {i+1}")
+
     if not docs:
         return None, [], []
+
     emb = embedder.encode(docs)
     idx = faiss.IndexFlatL2(emb.shape[1])
     idx.add(np.array(emb))
@@ -229,14 +305,12 @@ def build_index():
     pickle.dump({"documents": docs, "sources": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
 
-
 if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
     st.session_state.index = faiss.read_index(INDEX_FILE)
     data = pickle.load(open(CACHE_FILE, "rb"))
     st.session_state.documents = data["documents"]
     st.session_state.sources = data["sources"]
     st.session_state.index_ready = True
-
 
 # ======================================================
 # SIDEBAR
@@ -246,7 +320,7 @@ logout_ui()
 
 st.sidebar.subheader("📁 Hospital Evidence Library")
 
-uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
+uploads = st.sidebar.file_uploader("Upload Medical PDFs", type=["pdf"], accept_multiple_files=True)
 if uploads:
     for f in uploads:
         with open(os.path.join(PDF_FOLDER, f.name), "wb") as out:
@@ -262,17 +336,14 @@ st.sidebar.markdown("🟢 Index Status: READY" if os.path.exists(INDEX_FILE) els
 
 module = st.sidebar.radio("Select Module", [
     "Clinical Research Copilot",
-    "Lab Report Intelligence",
     "Audit Trail"
 ])
-
 
 # ======================================================
 # HEADER
 # ======================================================
 st.markdown("## 🧠 ĀROGYABODHA AI — Hospital Clinical Intelligence Platform")
 st.caption("Hospital-grade • Evidence-locked • OCR-enabled • Governance enabled")
-
 
 # ======================================================
 # CLINICAL RESEARCH COPILOT
@@ -286,7 +357,7 @@ if module == "Clinical Research Copilot":
     if st.button("🚀 Analyze") and query:
         audit("clinical_query", {"query": query, "mode": mode})
 
-        tabs = ["🏥 Hospital", "🌍 Global"] if mode!="Hospital AI" else ["🏥 Hospital"]
+        tabs = ["🏥 Hospital", "🌍 Global"] if mode != "Hospital AI" else ["🏥 Hospital"]
         tab_objs = st.tabs(tabs)
 
         if "🏥 Hospital" in tabs:
@@ -302,7 +373,7 @@ if module == "Clinical Research Copilot":
                     prompt = f"Use only hospital evidence:\n{context}\n\nQuestion:{query}"
                     resp = safe_ai_call(prompt, "Hospital AI")
 
-                    if resp["status"]=="ok":
+                    if resp["status"] == "ok":
                         st.success("Hospital Evidence Answer")
                         st.write(resp["answer"])
 
@@ -317,7 +388,6 @@ if module == "Clinical Research Copilot":
                 resp = safe_ai_call(query, "Global AI")
                 st.write(resp["answer"])
 
-
 # ======================================================
 # AUDIT TRAIL
 # ======================================================
@@ -326,7 +396,6 @@ if module == "Audit Trail":
     if os.path.exists(AUDIT_LOG):
         df = pd.DataFrame(json.load(open(AUDIT_LOG)))
         st.dataframe(df, use_container_width=True)
-
 
 # ======================================================
 # FOOTER
