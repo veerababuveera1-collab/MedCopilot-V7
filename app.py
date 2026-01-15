@@ -106,27 +106,27 @@ def login_ui():
         font-family: 'Segoe UI', sans-serif;
     }
 
-    .login-bg {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 95vh;
+    .block-container {
+        padding-top: 2rem;
     }
 
     .login-card {
-        width: 900px;
-        padding: 60px;
-        border-radius: 28px;
-        background: rgba(255,255,255,0.07);
-        backdrop-filter: blur(25px);
-        box-shadow: 0 0 120px rgba(56,189,248,0.35);
-        border: 1px solid rgba(255,255,255,0.18);
+        max-width: 520px;
+        margin: auto;
+        margin-top: 120px;
+        padding: 40px;
+        border-radius: 20px;
+        background: rgba(255,255,255,0.06);
+        backdrop-filter: blur(20px);
+        box-shadow: 0 0 80px rgba(56,189,248,0.25);
+        border: 1px solid rgba(255,255,255,0.15);
+        text-align: center;
     }
 
     .login-title {
-        font-size: 42px;
+        font-size: 36px;
         font-weight: 900;
-        margin-bottom: 10px;
+        margin-bottom: 6px;
         background: linear-gradient(90deg,#38bdf8,#22d3ee,#0ea5e9);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
@@ -134,35 +134,41 @@ def login_ui():
 
     .login-subtitle {
         color: #cbd5f5;
-        margin-bottom: 40px;
-        font-size: 18px;
+        font-size: 16px;
+        margin-bottom: 30px;
+        line-height: 1.5;
+    }
+
+    .login-footer {
+        margin-top: 25px;
+        font-size: 13px;
+        color: #94a3b8;
     }
 
     .stTextInput input {
         background: rgba(255,255,255,0.08) !important;
-        border-radius: 14px !important;
-        padding: 14px !important;
+        border-radius: 12px !important;
+        padding: 12px !important;
         color: white !important;
         border: 1px solid rgba(255,255,255,0.25) !important;
     }
 
     .stButton button {
         width: 100%;
-        padding: 16px;
-        border-radius: 16px;
-        font-size: 18px;
+        padding: 14px;
+        border-radius: 14px;
+        font-size: 17px;
         font-weight: 800;
         background: linear-gradient(90deg,#38bdf8,#22d3ee);
         color: #020617;
         border: none;
-        margin-top: 20px;
-        box-shadow: 0 0 40px rgba(34,211,238,0.7);
+        margin-top: 15px;
+        box-shadow: 0 0 30px rgba(34,211,238,0.6);
     }
 
     </style>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div class="login-bg">', unsafe_allow_html=True)
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
 
     st.markdown('<div class="login-title">ĀROGYABODHA AI</div>', unsafe_allow_html=True)
@@ -178,7 +184,13 @@ def login_ui():
         password = st.text_input("Secure Access Key", type="password")
         submitted = st.form_submit_button("🚀 Enter Clinical AI Platform")
 
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    st.markdown("""
+        <div class="login-footer">
+        Evidence Locked • Governance Ready • ICU Intelligence
+        </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
     if submitted:
         users = json.load(open(USERS_DB))
