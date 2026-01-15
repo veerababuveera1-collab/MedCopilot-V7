@@ -3,13 +3,23 @@
 # ======================================================
 
 import streamlit as st
-import os, json, pickle, datetime
+import os, json, pickle, datetime, io
 import numpy as np
 import faiss
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
+
+# External AI connector (must return: {"answer": "..."} )
 from external_research import external_research_answer
+
+# Optional OCR (hooks)
+OCR_AVAILABLE = True
+try:
+    import pytesseract
+    from pdf2image import convert_from_path
+except:
+    OCR_AVAILABLE = False
 
 # ======================================================
 # PAGE CONFIG
@@ -21,7 +31,7 @@ st.set_page_config(
 )
 
 # ======================================================
-# DISCLAIMER
+# DISCLAIMER (Governance)
 # ======================================================
 st.info(
     "ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS) only. "
@@ -32,17 +42,21 @@ st.info(
 # ======================================================
 # STORAGE
 # ======================================================
-PDF_FOLDER = "medical_library"
-VECTOR_FOLDER = "vector_cache"
-INDEX_FILE = f"{VECTOR_FOLDER}/index.faiss"
-CACHE_FILE = f"{VECTOR_FOLDER}/cache.pkl"
-USERS_DB = "users.json"
-AUDIT_LOG = "audit_log.json"
+BASE_DIR = os.getcwd()
+PDF_FOLDER = os.path.join(BASE_DIR, "medical_library")
+LAB_FOLDER = os.path.join(BASE_DIR, "lab_reports")
+VECTOR_FOLDER = os.path.join(BASE_DIR, "vector_cache")
+
+INDEX_FILE = os.path.join(VECTOR_FOLDER, "index.faiss")
+CACHE_FILE = os.path.join(VECTOR_FOLDER, "cache.pkl")
+USERS_DB = os.path.join(BASE_DIR, "users.json")
+AUDIT_LOG = os.path.join(BASE_DIR, "audit_log.json")
 
 os.makedirs(PDF_FOLDER, exist_ok=True)
+os.makedirs(LAB_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
-# Demo users
+# Demo users (replace with hospital IAM later)
 if not os.path.exists(USERS_DB):
     json.dump({
         "doctor1": {"password": "doctor123", "role": "Doctor"},
@@ -66,50 +80,55 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 # ======================================================
-# AUDIT SYSTEM
+# AUDIT SYSTEM (Compliance)
 # ======================================================
 def audit(event, meta=None):
     rows = []
     if os.path.exists(AUDIT_LOG):
-        rows = json.load(open(AUDIT_LOG))
+        try:
+            rows = json.load(open(AUDIT_LOG))
+        except:
+            rows = []
     rows.append({
         "time": str(datetime.datetime.now()),
         "user": st.session_state.get("username"),
+        "role": st.session_state.get("role"),
         "event": event,
         "meta": meta or {}
     })
     json.dump(rows, open(AUDIT_LOG, "w"), indent=2)
 
 # ======================================================
-# SAFE AI WRAPPER
+# SAFE AI WRAPPER (Governance)
 # ======================================================
-def safe_ai_call(prompt):
+def safe_ai_call(prompt, mode="AI"):
+    """
+    Governance-safe AI call wrapper:
+    - Failure handling
+    - Empty-response handling
+    - Audit logging
+    """
     try:
         result = external_research_answer(prompt)
         if not result or "answer" not in result:
-            return "⚠ AI returned empty response."
-        return result["answer"]
+            audit("ai_empty_response", {"mode": mode})
+            return {"status": "error", "answer": "⚠ AI returned empty response."}
+        return {"status": "ok", "answer": result["answer"]}
     except Exception as e:
-        audit("ai_failure", {"error": str(e)})
-        return "⚠ AI service unavailable. Governance block applied."
+        audit("ai_failure", {"mode": mode, "error": str(e)})
+        return {"status": "down", "answer": "⚠ AI service unavailable. Governance block applied."}
 
 # ======================================================
-# WOW LOGIN UI (STREAMLIT SAFE)
+# WOW LOGIN UI (Streamlit-native, cloud-safe)
 # ======================================================
 def login_ui():
 
     st.markdown("""
     <style>
-
     body {
         background: radial-gradient(circle at top, #020617 0%, #020617 60%, #000000 100%);
         font-family: 'Segoe UI', sans-serif;
     }
-
-    .block-container {
-        padding-top: 2rem;
-    }
-
     .login-card {
         max-width: 520px;
         margin: auto;
@@ -122,7 +141,6 @@ def login_ui():
         border: 1px solid rgba(255,255,255,0.15);
         text-align: center;
     }
-
     .login-title {
         font-size: 36px;
         font-weight: 900;
@@ -131,20 +149,17 @@ def login_ui():
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
-
     .login-subtitle {
         color: #cbd5f5;
         font-size: 16px;
         margin-bottom: 30px;
         line-height: 1.5;
     }
-
     .login-footer {
         margin-top: 25px;
         font-size: 13px;
         color: #94a3b8;
     }
-
     .stTextInput input {
         background: rgba(255,255,255,0.08) !important;
         border-radius: 12px !important;
@@ -152,7 +167,6 @@ def login_ui():
         color: white !important;
         border: 1px solid rgba(255,255,255,0.25) !important;
     }
-
     .stButton button {
         width: 100%;
         padding: 14px;
@@ -165,7 +179,6 @@ def login_ui():
         margin-top: 15px;
         box-shadow: 0 0 30px rgba(34,211,238,0.6);
     }
-
     </style>
     """, unsafe_allow_html=True)
 
@@ -202,6 +215,7 @@ def login_ui():
             st.success("✅ Secure Hospital Access Granted")
             st.rerun()
         else:
+            audit("login_failed", {"user": username})
             st.error("❌ Invalid Credentials")
 
 # ======================================================
@@ -223,7 +237,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ======================================================
-# MODEL
+# MODEL (Embeddings)
 # ======================================================
 @st.cache_resource
 def load_embedder():
@@ -232,45 +246,54 @@ def load_embedder():
 embedder = load_embedder()
 
 # ======================================================
-# FAISS INDEX
+# FAISS INDEX (Hospital Evidence RAG)
 # ======================================================
+def extract_text_from_pdf_bytes(file_bytes: bytes):
+    reader = PdfReader(io.BytesIO(file_bytes))
+    pages_text = []
+    for i, p in enumerate(reader.pages[:300]):  # cap pages for safety
+        t = p.extract_text()
+        if t and len(t) > 100:
+            pages_text.append(t)
+    return pages_text
+
 def build_index():
     docs, srcs = [], []
     for pdf in os.listdir(PDF_FOLDER):
-        if pdf.endswith(".pdf"):
-            reader = PdfReader(os.path.join(PDF_FOLDER, pdf))
-            for i, p in enumerate(reader.pages[:200]):
-                t = p.extract_text()
-                if t and len(t) > 100:
-                    docs.append(t)
-                    srcs.append(f"{pdf} — Page {i+1}")
+        if pdf.lower().endswith(".pdf"):
+            with open(os.path.join(PDF_FOLDER, pdf), "rb") as f:
+                texts = extract_text_from_pdf_bytes(f.read())
+            for i, t in enumerate(texts):
+                docs.append(t)
+                srcs.append(f"{pdf} — Page {i+1}")
 
     if not docs:
         return None, [], []
 
-    emb = embedder.encode(docs)
+    emb = embedder.encode(docs, show_progress_bar=False)
     idx = faiss.IndexFlatL2(emb.shape[1])
-    idx.add(np.array(emb))
+    idx.add(np.array(emb, dtype=np.float32))
     faiss.write_index(idx, INDEX_FILE)
     pickle.dump({"documents": docs, "sources": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
 
+# Load cached index if exists
 if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
     st.session_state.index = faiss.read_index(INDEX_FILE)
     data = pickle.load(open(CACHE_FILE, "rb"))
-    st.session_state.documents = data["documents"]
-    st.session_state.sources = data["sources"]
+    st.session_state.documents = data.get("documents", [])
+    st.session_state.sources = data.get("sources", [])
     st.session_state.index_ready = True
 
 # ======================================================
-# SIDEBAR
+# SIDEBAR (Command Center Navigation)
 # ======================================================
-st.sidebar.markdown(f"👨‍⚕️ User: **{st.session_state.username}**")
+st.sidebar.markdown(f"👨‍⚕️ User: **{st.session_state.username}** ({st.session_state.role})")
 logout_ui()
 
 st.sidebar.subheader("📁 Hospital Evidence Library")
 
-uploads = st.sidebar.file_uploader("Upload Medical PDFs", type=["pdf"], accept_multiple_files=True)
+uploads = st.sidebar.file_uploader("Upload Medical PDFs (Bulk)", type=["pdf"], accept_multiple_files=True)
 if uploads:
     for f in uploads:
         with open(os.path.join(PDF_FOLDER, f.name), "wb") as out:
@@ -280,20 +303,22 @@ if uploads:
 if st.sidebar.button("🔄 Build Evidence Index"):
     st.session_state.index, st.session_state.documents, st.session_state.sources = build_index()
     st.session_state.index_ready = True
+    audit("build_index", {"count": len(st.session_state.documents)})
     st.sidebar.success("Hospital Evidence Index Built")
 
-st.sidebar.markdown("🟢 Index Status: READY" if os.path.exists(INDEX_FILE) else "🔴 Index Status: NOT BUILT")
+st.sidebar.markdown("🟢 Index Status: READY" if st.session_state.index_ready else "🔴 Index Status: NOT BUILT")
 
 module = st.sidebar.radio("Select Module", [
     "Clinical Research Copilot",
+    "Lab Report Intelligence",
     "Audit Trail"
 ])
 
 # ======================================================
-# HEADER
+# HEADER (Dashboard)
 # ======================================================
 st.markdown("## 🧠 ĀROGYABODHA AI — Hospital Clinical Intelligence Platform")
-st.caption("Hospital-grade • Evidence-locked • Governance enabled")
+st.caption("Hospital-grade • Evidence-locked • OCR-enabled • Governance enabled")
 
 # ======================================================
 # CLINICAL RESEARCH COPILOT
@@ -302,37 +327,95 @@ if module == "Clinical Research Copilot":
     st.subheader("🔬 Clinical Research Copilot")
 
     query = st.text_input("Ask a clinical research question")
+    mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
 
     if st.button("🚀 Analyze") and query:
-        audit("clinical_query", {"query": query})
+        audit("clinical_query", {"query": query, "mode": mode})
 
-        if not st.session_state.index_ready:
-            st.error("Hospital evidence index not built.")
-        else:
-            qemb = embedder.encode([query])
-            _, I = st.session_state.index.search(np.array(qemb), 5)
+        tabs = ["🏥 Hospital", "🌍 Global"] if mode != "Hospital AI" else ["🏥 Hospital"]
+        tab_objs = st.tabs(tabs)
 
-            context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
-            sources = [st.session_state.sources[i] for i in I[0]]
+        # ---------------- Hospital AI (RAG) ----------------
+        if "🏥 Hospital" in tabs:
+            with tab_objs[tabs.index("🏥 Hospital")]:
+                if not st.session_state.index_ready:
+                    st.error("Hospital evidence index not built.")
+                else:
+                    qemb = embedder.encode([query])
+                    _, I = st.session_state.index.search(np.array(qemb, dtype=np.float32), 5)
 
-            prompt = f"Use only hospital evidence:\n{context}\n\nQuestion:{query}"
-            answer = safe_ai_call(prompt)
+                    context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
+                    sources = [st.session_state.sources[i] for i in I[0]]
 
-            st.success("Hospital Evidence Answer")
-            st.write(answer)
+                    prompt = f"Use only hospital evidence below to answer.\n\n{context}\n\nQuestion: {query}"
+                    resp = safe_ai_call(prompt, "Hospital AI")
 
-            st.markdown("### 📑 Evidence Sources")
-            for s in sources:
-                st.info(s)
+                    if resp["status"] == "ok":
+                        st.success("Hospital Evidence Answer")
+                        st.write(resp["answer"])
+
+                        st.markdown("### 📑 Evidence Sources")
+                        for s in sources:
+                            st.info(s)
+                    else:
+                        st.error(resp["answer"])
+
+        # ---------------- Global AI ----------------
+        if "🌍 Global" in tabs:
+            with tab_objs[tabs.index("🌍 Global")]:
+                resp = safe_ai_call(query, "Global AI")
+                if resp["status"] == "ok":
+                    st.success("Global Research Answer")
+                    st.write(resp["answer"])
+                else:
+                    st.error(resp["answer"])
 
 # ======================================================
-# AUDIT TRAIL
+# LAB REPORT INTELLIGENCE (Module Ready + OCR Hooks)
+# ======================================================
+if module == "Lab Report Intelligence":
+    st.subheader("🧪 Lab Report Intelligence")
+
+    st.info("Upload lab reports (PDF/Image). OCR & AI interpretation pipeline is ready (placeholder).")
+
+    uploaded_lab = st.file_uploader("Upload Lab Report (PDF/PNG/JPG)", type=["pdf", "png", "jpg", "jpeg"])
+
+    if uploaded_lab:
+        # Save file
+        save_path = os.path.join(LAB_FOLDER, uploaded_lab.name)
+        with open(save_path, "wb") as out:
+            out.write(uploaded_lab.getbuffer())
+
+        audit("lab_upload", {"file": uploaded_lab.name})
+        st.success("Lab report uploaded successfully.")
+
+        # OCR hook (if enabled)
+        if OCR_AVAILABLE and uploaded_lab.type.startswith("image"):
+            try:
+                img_bytes = uploaded_lab.getvalue()
+                # Placeholder: integrate image->text OCR here if needed
+                st.markdown("### 🧾 OCR Text (Preview)")
+                st.write("OCR pipeline ready. (Integrate image-to-text here.)")
+            except Exception as e:
+                audit("ocr_failure", {"file": uploaded_lab.name, "error": str(e)})
+                st.warning("OCR failed for this file.")
+
+        st.markdown("### 🧠 AI Interpretation")
+        st.write("AI interpretation module is ready in architecture. Enable in next version.")
+
+# ======================================================
+# AUDIT TRAIL (Compliance Dashboard)
 # ======================================================
 if module == "Audit Trail":
     st.subheader("🕒 Audit Trail")
     if os.path.exists(AUDIT_LOG):
-        df = pd.DataFrame(json.load(open(AUDIT_LOG)))
-        st.dataframe(df, use_container_width=True)
+        try:
+            df = pd.DataFrame(json.load(open(AUDIT_LOG)))
+            st.dataframe(df, use_container_width=True)
+        except:
+            st.warning("Audit log is empty or corrupted.")
+    else:
+        st.info("No audit records yet.")
 
 # ======================================================
 # FOOTER
