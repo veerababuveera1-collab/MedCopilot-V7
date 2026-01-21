@@ -4,7 +4,7 @@
 # ============================================================
 
 import streamlit as st
-import os, json, pickle, datetime, io, requests
+import os, json, pickle, datetime, io, requests, re
 import numpy as np
 import faiss
 import pandas as pd
@@ -17,8 +17,8 @@ from pypdf import PdfReader
 st.set_page_config("ĀROGYABODHA AI — Clinical Decision Intelligence OS", "🧠", layout="wide")
 
 st.info("""
-ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS).
-It does NOT provide diagnosis or treatment.
+ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS).  
+It does NOT provide diagnosis or treatment.  
 Final clinical decisions must be made by licensed doctors.
 """)
 
@@ -118,6 +118,15 @@ def load_embedder():
 embedder = load_embedder()
 
 # ============================================================
+# MEDICAL TEXT NORMALIZATION (CRITICAL FIX)
+# ============================================================
+def normalize_medical_text(text):
+    text = re.sub(r'(?<=\w)\s+(?=\w)', '', text)
+    text = text.replace("\n", " ")
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+# ============================================================
 # PDF INDEXING
 # ============================================================
 def extract_text(file_bytes):
@@ -126,7 +135,7 @@ def extract_text(file_bytes):
     for p in reader.pages[:200]:
         t = p.extract_text()
         if t and len(t) > 150:
-            pages.append(t)
+            pages.append(normalize_medical_text(t))
     return pages
 
 def build_index():
@@ -160,7 +169,7 @@ if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
 # ============================================================
 # CLINICAL SAFE RAG
 # ============================================================
-def search_rag(query, k=5):
+def search_rag(query, k=6):
     if not st.session_state.index_ready:
         return [], []
 
@@ -201,18 +210,15 @@ def fetch_fda_alerts():
     url = "https://api.fda.gov/drug/enforcement.json?limit=5"
     r = requests.get(url, timeout=15)
     data = r.json()
-    alerts = []
-    for item in data["results"]:
-        alerts.append(f"{item['product_description']} — {item['reason_for_recall']}")
-    return alerts
+    return [f"{i['product_description']} — {i['reason_for_recall']}" for i in data["results"]]
 
 # ============================================================
 # CLINICAL PROTOCOL ENGINE
 # ============================================================
 def clinical_answer(query, evidence):
-    text = " ".join(evidence[:4])
-    lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 40]
-    steps = lines[:10]
+    text = " ".join(evidence[:3])
+    sentences = [s.strip() for s in re.split(r'\. ', text) if len(s.strip()) > 40]
+    steps = sentences[:10]
 
     formatted = f"""
 ## 🏥 Hospital Clinical Decision Protocol
@@ -225,8 +231,8 @@ def clinical_answer(query, evidence):
 ### 1️⃣ Initial Clinical Assessment
 """
 
-    for step in steps[:3]:
-        formatted += f"• {step}\n"
+    for s in steps[:4]:
+        formatted += f"• {s}.\n"
 
     formatted += """
 
@@ -235,8 +241,8 @@ def clinical_answer(query, evidence):
 ### 2️⃣ Emergency Response Actions
 """
 
-    for step in steps[3:7]:
-        formatted += f"• {step}\n"
+    for s in steps[4:7]:
+        formatted += f"• {s}.\n"
 
     formatted += """
 
@@ -245,19 +251,18 @@ def clinical_answer(query, evidence):
 ### 3️⃣ Hospital Activation Protocol
 """
 
-    for step in steps[7:10]:
-        formatted += f"• {step}\n"
+    for s in steps[7:10]:
+        formatted += f"• {s}.\n"
 
     formatted += """
 
 ---
 
 ### ⚠ Safety & Compliance Checklist
-• Follow hospital SOP and NDMA guidelines  
-• Activate Emergency Control Room  
+• Follow hospital SOP  
 • Ensure senior physician supervision  
-• Maintain patient triage and tagging  
-• Document all clinical actions  
+• Maintain triage and documentation  
+• Activate emergency response if required  
 
 ---
 
