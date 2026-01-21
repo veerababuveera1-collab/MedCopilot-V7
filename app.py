@@ -17,8 +17,8 @@ from pypdf import PdfReader
 st.set_page_config("ĀROGYABODHA AI — Clinical Decision Intelligence OS", "🧠", layout="wide")
 
 st.info("""
-ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS).  
-It does NOT provide diagnosis or treatment.  
+ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS).
+It does NOT provide diagnosis or treatment.
 Final clinical decisions must be made by licensed doctors.
 """)
 
@@ -39,7 +39,7 @@ os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
 # ============================================================
-# INIT DATABASES
+# DATABASE INIT
 # ============================================================
 if not os.path.exists(PATIENT_DB):
     json.dump([], open(PATIENT_DB, "w"), indent=2)
@@ -51,7 +51,7 @@ if not os.path.exists(USERS_DB):
     }, open(USERS_DB, "w"), indent=2)
 
 # ============================================================
-# SESSION STATE
+# SESSION
 # ============================================================
 defaults = {
     "logged_in": False,
@@ -109,7 +109,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ============================================================
-# AI MODEL
+# MODEL
 # ============================================================
 @st.cache_resource
 def load_embedder():
@@ -118,24 +118,24 @@ def load_embedder():
 embedder = load_embedder()
 
 # ============================================================
-# MEDICAL TEXT NORMALIZATION (CRITICAL FIX)
+# TEXT CLEANER
 # ============================================================
-def normalize_medical_text(text):
+def clean_text(text):
     text = re.sub(r'(?<=\w)\s+(?=\w)', '', text)
     text = text.replace("\n", " ")
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
 # ============================================================
-# PDF INDEXING
+# PDF PROCESSING
 # ============================================================
 def extract_text(file_bytes):
     reader = PdfReader(io.BytesIO(file_bytes))
     pages = []
     for p in reader.pages[:200]:
         t = p.extract_text()
-        if t and len(t) > 150:
-            pages.append(normalize_medical_text(t))
+        if t and len(t) > 200:
+            pages.append(clean_text(t))
     return pages
 
 def build_index():
@@ -167,7 +167,7 @@ if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
     st.session_state.index_ready = True
 
 # ============================================================
-# CLINICAL SAFE RAG
+# RAG SEARCH
 # ============================================================
 def search_rag(query, k=6):
     if not st.session_state.index_ready:
@@ -183,7 +183,79 @@ def search_rag(query, k=6):
     return hits, srcs
 
 # ============================================================
-# GLOBAL CONNECTORS
+# INTENT ENGINE
+# ============================================================
+def detect_intent(q):
+    q = q.lower()
+    if "cost" in q or "econom" in q:
+        return "economics"
+    if "protocol" in q or "management" in q:
+        return "protocol"
+    if "emergency" in q or "trauma" in q:
+        return "emergency"
+    if "policy" in q or "guideline" in q:
+        return "policy"
+    return "clinical"
+
+# ============================================================
+# HOSPITAL INTELLIGENCE ENGINE
+# ============================================================
+def hospital_reasoning(query, evidence):
+    intent = detect_intent(query)
+    text = " ".join(evidence[:4])
+    sentences = [s.strip() for s in re.split(r'\. ', text) if len(s.strip()) > 50]
+    core = sentences[:12]
+
+    report = f"""
+# 🏥 National Hospital Clinical Decision Report
+
+## Clinical Question
+{query}
+
+## Domain
+{intent.upper()} INTELLIGENCE
+
+---
+
+## Evidence Synthesis
+"""
+
+    for s in core[:6]:
+        report += f"• {s}.\n"
+
+    report += f"""
+
+---
+
+## Hospital Operations Impact
+• Infrastructure requirement analysis  
+• Staffing and training needs  
+• Infection control implications  
+• Cost and resource optimisation  
+
+---
+
+## Clinical Governance & Safety
+• NABH compliance  
+• MoHFW clinical standards  
+• ICMR disease registry alignment  
+• Patient safety protocols  
+
+---
+
+## Final Hospital Recommendation
+This decision pathway should be implemented under specialist supervision
+and aligned with national clinical guidelines.
+
+---
+
+⚠ This intelligence report is generated from hospital-approved medical literature.
+"""
+
+    return report
+
+# ============================================================
+# GLOBAL AI CONNECTORS
 # ============================================================
 def fetch_pubmed(query):
     url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -213,65 +285,6 @@ def fetch_fda_alerts():
     return [f"{i['product_description']} — {i['reason_for_recall']}" for i in data["results"]]
 
 # ============================================================
-# CLINICAL PROTOCOL ENGINE
-# ============================================================
-def clinical_answer(query, evidence):
-    text = " ".join(evidence[:3])
-    sentences = [s.strip() for s in re.split(r'\. ', text) if len(s.strip()) > 40]
-    steps = sentences[:10]
-
-    formatted = f"""
-## 🏥 Hospital Clinical Decision Protocol
-
-### Condition
-**{query.upper()}**
-
----
-
-### 1️⃣ Initial Clinical Assessment
-"""
-
-    for s in steps[:4]:
-        formatted += f"• {s}.\n"
-
-    formatted += """
-
----
-
-### 2️⃣ Emergency Response Actions
-"""
-
-    for s in steps[4:7]:
-        formatted += f"• {s}.\n"
-
-    formatted += """
-
----
-
-### 3️⃣ Hospital Activation Protocol
-"""
-
-    for s in steps[7:10]:
-        formatted += f"• {s}.\n"
-
-    formatted += """
-
----
-
-### ⚠ Safety & Compliance Checklist
-• Follow hospital SOP  
-• Ensure senior physician supervision  
-• Maintain triage and documentation  
-• Activate emergency response if required  
-
----
-
-🔒 Protocol derived from hospital-approved medical literature.
-"""
-
-    return formatted
-
-# ============================================================
 # SIDEBAR
 # ============================================================
 st.sidebar.markdown(f"👨‍⚕️ **{st.session_state.username}** ({st.session_state.role})")
@@ -299,10 +312,8 @@ module = st.sidebar.radio("Medical Intelligence Center", [
 # MODULES
 # ============================================================
 
-# ---------- Evidence Library ----------
 if module == "📁 Evidence Library":
     st.header("📁 Hospital Evidence Library")
-
     files = st.file_uploader("Upload Medical PDFs", type=["pdf"], accept_multiple_files=True)
     if files:
         for f in files:
@@ -316,11 +327,10 @@ if module == "📁 Evidence Library":
         audit("BUILD_INDEX", {"docs": len(st.session_state.docs)})
         st.success("Index built successfully")
 
-# ---------- Clinical Research Copilot ----------
+# ============================================================
 if module == "🔬 Clinical Research Copilot":
     st.header("🔬 Clinical Decision Intelligence Engine")
     st.write(f"Selected AI Mode: **{st.session_state.ai_mode}**")
-
     query = st.text_input("Ask a clinical research question")
 
     if st.button("Analyze") and query:
@@ -332,9 +342,7 @@ if module == "🔬 Clinical Research Copilot":
             hospital_hits, sources = search_rag(query)
 
         if hospital_hits and st.session_state.ai_mode != "Global AI":
-            st.subheader("🏥 Hospital Clinical Protocol")
-            st.markdown(clinical_answer(query, hospital_hits))
-
+            st.markdown(hospital_reasoning(query, hospital_hits))
             st.markdown("### Evidence Sources")
             for s in sources:
                 st.success(s)
@@ -356,10 +364,9 @@ if module == "🔬 Clinical Research Copilot":
             for a in alerts:
                 st.warning(a)
 
-# ---------- Patient Workspace ----------
+# ============================================================
 if module == "👤 Patient Workspace":
     st.header("👤 Patient Workspace")
-
     patients = json.load(open(PATIENT_DB))
 
     with st.form("add_patient"):
@@ -382,20 +389,18 @@ if module == "👤 Patient Workspace":
 
     st.dataframe(pd.DataFrame(patients))
 
-# ---------- Dashboard ----------
+# ============================================================
 if module == "📊 Dashboard":
     st.header("📊 Hospital Intelligence Dashboard")
     st.metric("Evidence Documents", len(st.session_state.docs))
     st.metric("Vector Index", "Ready" if st.session_state.index_ready else "Not Ready")
     st.metric("Audit Events", len(json.load(open(AUDIT_LOG))) if os.path.exists(AUDIT_LOG) else 0)
 
-# ---------- Audit ----------
+# ============================================================
 if module == "🕒 Audit & Compliance":
     st.header("🕒 Audit & Compliance")
     if os.path.exists(AUDIT_LOG):
         st.dataframe(pd.DataFrame(json.load(open(AUDIT_LOG))))
 
-# ============================================================
-# FOOTER
 # ============================================================
 st.caption("ĀROGYABODHA AI — National Clinical Decision Intelligence OS")
