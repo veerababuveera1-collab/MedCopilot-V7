@@ -1,10 +1,10 @@
 # ============================================================
 # ĀROGYABODHA AI — Hospital Clinical Care + Decision Support OS
-# Full End-to-End Hospital Operating Platform (Final Version)
+# Final Production Hospital Operating Platform
 # ============================================================
 
 import streamlit as st
-import os, json, pickle, datetime, io
+import os, json, pickle, datetime, io, textwrap
 import numpy as np
 import faiss
 import pandas as pd
@@ -144,22 +144,15 @@ def build_index():
 
     faiss.write_index(idx, INDEX_FILE)
     pickle.dump({"docs": docs, "srcs": srcs}, open(CACHE_FILE, "wb"))
-
     return idx, docs, srcs
 
-# Load existing index (backward compatible)
+# Load index
 if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
     try:
         st.session_state.index = faiss.read_index(INDEX_FILE)
         cache = pickle.load(open(CACHE_FILE, "rb"))
-
-        if "docs" in cache:
-            st.session_state.docs = cache["docs"]
-            st.session_state.srcs = cache["srcs"]
-        elif "documents" in cache:
-            st.session_state.docs = cache["documents"]
-            st.session_state.srcs = cache["sources"]
-
+        st.session_state.docs = cache.get("docs", cache.get("documents", []))
+        st.session_state.srcs = cache.get("srcs", cache.get("sources", []))
         st.session_state.index_ready = True
     except:
         st.session_state.index_ready = False
@@ -235,13 +228,43 @@ def get_redflags(symptoms):
 
 def retrieve_evidence(query):
     if not st.session_state.index_ready:
-        return None, []
+        return "", []
     qemb = embedder.encode(query)
     qvec = np.array([qemb], dtype=np.float32)
     D, I = st.session_state.index.search(qvec, 5)
-    context = "\n\n".join([st.session_state.docs[i] for i in I[0]])
+    context = "\n".join([st.session_state.docs[i] for i in I[0]])
     sources = [st.session_state.srcs[i] for i in I[0]]
     return context, sources
+
+# ============================================================
+# CLINICAL ANSWER FORMATTER  (NEW)
+# ============================================================
+def clinical_formatter(query, context, sources):
+    short = textwrap.shorten(context.replace("\n", " "), width=1200)
+    srcs = "\n".join([f"• {s}" for s in sources])
+
+    return f"""
+## 🏥 Clinical Overview — {query}
+
+### 🔬 Summary
+{short}
+
+### 🧪 Diagnosis
+Biopsy / Imaging / Laboratory tests depending on clinical suspicion.
+
+### 💊 Management
+Treatment depends on cancer type, stage and patient condition.
+Includes surgery, chemotherapy, radiotherapy or immunotherapy.
+
+### 🚨 Red Flags
+• Rapidly growing lump  
+• Unexplained weight loss  
+• Bleeding from any orifice  
+• Persistent pain  
+
+### 📚 Evidence Sources
+{srcs}
+"""
 
 # ============================================================
 # SIDEBAR
@@ -316,7 +339,7 @@ if module == "👤 Patient Workspace":
     st.dataframe(pd.DataFrame(patients), use_container_width=True)
 
 # ============================================================
-# CLINICAL REASONING ENGINE (AI MODES)
+# CLINICAL REASONING ENGINE (AI MODES + FORMATTER)
 # ============================================================
 if module == "🔬 Clinical Reasoning Engine":
     st.header("🔬 Clinical Reasoning Engine")
@@ -335,9 +358,7 @@ if module == "🔬 Clinical Reasoning Engine":
         flags = get_redflags(symptoms)
         treatments = get_treatments(causes)
 
-        hospital_context, sources = None, []
-        if ai_mode in ["🏥 Hospital AI", "🔀 Hybrid AI"]:
-            hospital_context, sources = retrieve_evidence(query)
+        context, sources = retrieve_evidence(query)
 
         st.subheader("🏥 Clinical Summary")
         st.write("Symptoms detected:", symptoms if symptoms else "Not specified")
@@ -347,7 +368,7 @@ if module == "🔬 Clinical Reasoning Engine":
             st.write(f"• {c} (Risk: {risks[c]})")
 
         if flags:
-            st.subheader("🚨 Red Flags (Urgent Attention)")
+            st.subheader("🚨 Red Flags")
             for f in flags:
                 st.error(f)
 
@@ -359,23 +380,15 @@ if module == "🔬 Clinical Reasoning Engine":
         for tr in treatments:
             st.write("•", tr)
 
-        if ai_mode == "🏥 Hospital AI" and hospital_context:
-            st.subheader("📚 Hospital Evidence")
-            st.write(hospital_context[:2000] + "...")
-            for s in sources:
-                st.info(s)
+        # ===== Hospital AI (Formatted) =====
+        if ai_mode in ["🏥 Hospital AI", "🔀 Hybrid AI"] and context:
+            st.subheader("📚 Hospital Clinical Evidence")
+            formatted = clinical_formatter(query, context, sources)
+            st.markdown(formatted)
 
         if ai_mode == "🌍 Global AI":
             st.subheader("🌍 Global Clinical Reasoning")
-            st.write("Clinical reasoning based on global medical knowledge base.")
-
-        if ai_mode == "🔀 Hybrid AI":
-            st.subheader("🔀 Hybrid Clinical Intelligence")
-            st.write("Combining hospital evidence with global medical reasoning.")
-            if hospital_context:
-                st.write(hospital_context[:2000] + "...")
-                for s in sources:
-                    st.info(s)
+            st.write("Global medical knowledge based clinical reasoning engine active.")
 
 # ============================================================
 # DOCTOR ORDERS
