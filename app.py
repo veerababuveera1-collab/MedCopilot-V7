@@ -1,10 +1,10 @@
 # ============================================================
 # ĀROGYABODHA AI — Clinical Decision Intelligence OS (CDIS)
-# National Hospital-Grade Medical Intelligence Platform
+# Production-Grade Hospital Intelligence Platform
 # ============================================================
 
 import streamlit as st
-import os, json, pickle, datetime, io, requests
+import os, json, pickle, datetime, io, requests, hashlib, uuid
 import numpy as np
 import faiss
 import pandas as pd
@@ -68,7 +68,7 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 # ============================================================
-# AUDIT
+# AUDIT LEDGER
 # ============================================================
 def audit(event, meta=None):
     logs = []
@@ -118,7 +118,7 @@ def load_embedder():
 embedder = load_embedder()
 
 # ============================================================
-# PDF INDEXING
+# PDF INDEXING (RAG)
 # ============================================================
 def extract_text(file_bytes):
     reader = PdfReader(io.BytesIO(file_bytes))
@@ -158,7 +158,7 @@ if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
     st.session_state.index_ready = True
 
 # ============================================================
-# CLINICAL SAFE RAG
+# CLINICAL SAFE SEARCH
 # ============================================================
 def search_rag(query, k=5):
     if not st.session_state.index_ready:
@@ -207,64 +207,16 @@ def fetch_fda_alerts():
     return alerts
 
 # ============================================================
-# CLINICAL PROTOCOL ENGINE
+# CLINICAL ANSWER ENGINE
 # ============================================================
 def clinical_answer(query, evidence):
-    text = " ".join(evidence[:4])
-    lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 40]
-    steps = lines[:10]
+    summary = " ".join(evidence[:2])
+    return f"""
+### Clinical Summary
+{summary[:2500]}
 
-    formatted = f"""
-## 🏥 Hospital Clinical Decision Protocol
-
-### Condition
-**{query.upper()}**
-
----
-
-### 1️⃣ Initial Clinical Assessment
+This evidence is derived from hospital-approved medical literature.
 """
-
-    for step in steps[:3]:
-        formatted += f"• {step}\n"
-
-    formatted += """
-
----
-
-### 2️⃣ Emergency Response Actions
-"""
-
-    for step in steps[3:7]:
-        formatted += f"• {step}\n"
-
-    formatted += """
-
----
-
-### 3️⃣ Hospital Activation Protocol
-"""
-
-    for step in steps[7:10]:
-        formatted += f"• {step}\n"
-
-    formatted += """
-
----
-
-### ⚠ Safety & Compliance Checklist
-• Follow hospital SOP and NDMA guidelines  
-• Activate Emergency Control Room  
-• Ensure senior physician supervision  
-• Maintain patient triage and tagging  
-• Document all clinical actions  
-
----
-
-🔒 Protocol derived from hospital-approved medical literature.
-"""
-
-    return formatted
 
 # ============================================================
 # SIDEBAR
@@ -326,28 +278,22 @@ if module == "🔬 Clinical Research Copilot":
         if st.session_state.ai_mode in ["Hospital AI", "Hybrid AI"]:
             hospital_hits, sources = search_rag(query)
 
-        if hospital_hits and st.session_state.ai_mode != "Global AI":
-            st.subheader("🏥 Hospital Clinical Protocol")
+        if hospital_hits:
+            st.subheader("🏥 Hospital Evidence")
             st.markdown(clinical_answer(query, hospital_hits))
-
             st.markdown("### Evidence Sources")
             for s in sources:
-                st.success(s)
+                st.info(s)
 
-        if st.session_state.ai_mode == "Global AI" or (st.session_state.ai_mode == "Hybrid AI" and not hospital_hits):
-            st.subheader("🌍 Global Clinical Intelligence")
-
+        if st.session_state.ai_mode in ["Global AI", "Hybrid AI"] and not hospital_hits:
+            st.warning("Using Global Medical Intelligence")
             pubmed = fetch_pubmed(query)
             trials = fetch_trials(query)
             alerts = fetch_fda_alerts()
 
-            st.subheader("📚 PubMed Articles")
-            st.write(pubmed)
-
-            st.subheader("🧪 Clinical Trials")
+            st.subheader("🌍 Global Medical Evidence")
+            st.write("PubMed:", pubmed)
             st.table(pd.DataFrame(trials))
-
-            st.subheader("⚠ FDA Safety Alerts")
             for a in alerts:
                 st.warning(a)
 
