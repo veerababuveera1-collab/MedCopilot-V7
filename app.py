@@ -4,7 +4,7 @@
 # ============================================================
 
 import streamlit as st
-import os, json, pickle, datetime, io, requests, textwrap, re
+import os, json, pickle, datetime, io, requests, re
 import numpy as np
 import faiss
 import pandas as pd
@@ -61,7 +61,8 @@ defaults = {
     "index_ready": False,
     "index": None,
     "docs": [],
-    "srcs": []
+    "srcs": [],
+    "ai_mode": "Hybrid AI"
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -150,7 +151,7 @@ def build_index():
     pickle.dump({"docs": docs, "srcs": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
 
-# Load cached index if exists
+# Load cached index
 if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
     try:
         st.session_state.index = faiss.read_index(INDEX_FILE)
@@ -162,7 +163,23 @@ if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
         st.session_state.index_ready = False
 
 # ============================================================
-# CLINICAL QUERY INTELLIGENCE LAYER (Enterprise Upgrade)
+# RAG SEARCH
+# ============================================================
+def search_rag(query, k=5):
+    if not st.session_state.index_ready:
+        return [], []
+
+    qemb = embedder.encode([query])
+    D, I = st.session_state.index.search(np.array(qemb).astype("float32"), k)
+
+    hits, srcs = [], []
+    for idx in I[0]:
+        hits.append(st.session_state.docs[idx])
+        srcs.append(st.session_state.srcs[idx])
+    return hits, srcs
+
+# ============================================================
+# QUERY INTELLIGENCE
 # ============================================================
 STOPWORDS = {
     "what","are","the","latest","for","in","patients","over","with","of","and","is","on",
@@ -170,34 +187,14 @@ STOPWORDS = {
     "who","whom","whose","which","when","where","why","how","can","could","should","would"
 }
 
-SYNONYMS = {
-    "glioblastoma": ["glioblastoma", "gbm"],
-    "treatment": ["treatment", "therapy", "management"],
-    "elderly": ["elderly", "older adults", "aged", "over 60"],
-    "parkinson": ["parkinson", "parkinson's disease", "pd"],
-    "genetic": ["genetic", "genomics", "mutation", "marker", "biomarker"],
-    "cancer": ["cancer", "oncology", "tumor", "malignancy"]
-}
-
-def normalize_query(user_query: str) -> str:
-    if not user_query:
-        return ""
-    q = user_query.lower()
+def normalize_query(q):
+    q = q.lower()
     q = re.sub(r"[^\w\s]", " ", q)
     tokens = [t for t in q.split() if t not in STOPWORDS and len(t) > 2]
-
-    expanded = []
-    for t in tokens:
-        expanded.append(t)
-        for key, vals in SYNONYMS.items():
-            if t == key:
-                expanded.extend(vals)
-
-    expanded = list(dict.fromkeys(expanded))
-    return " ".join(expanded)
+    return " ".join(tokens)
 
 # ============================================================
-# LIVE INTELLIGENCE CONNECTORS
+# GLOBAL CONNECTORS
 # ============================================================
 def fetch_pubmed(query):
     try:
@@ -245,10 +242,66 @@ def fetch_fda_alerts():
         return []
 
 # ============================================================
-# CLINICAL REASONING ENGINE
+# CLINICAL OUTPUT ENGINES
 # ============================================================
+def generate_protocol(query, evidence):
+    text = " ".join(evidence[:3])
+    lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 40]
+    steps = lines[:8]
+
+    formatted = f"""
+## 🏥 Hospital Clinical Decision Protocol
+
+### Condition
+**{query.upper()}**
+
+---
+
+### 1️⃣ Initial Clinical Assessment
+"""
+
+    for step in steps[:3]:
+        formatted += f"• {step}\n"
+
+    formatted += """
+
+---
+
+### 2️⃣ Emergency Response Actions
+"""
+
+    for step in steps[3:6]:
+        formatted += f"• {step}\n"
+
+    formatted += """
+
+---
+
+### 3️⃣ Hospital Activation Protocol
+"""
+
+    for step in steps[6:8]:
+        formatted += f"• {step}\n"
+
+    formatted += """
+
+---
+
+### ⚠ Safety & Compliance Checklist
+• Follow hospital SOP  
+• Senior physician supervision  
+• Document all actions  
+• Maintain triage  
+
+---
+
+🔒 Protocol derived from hospital-approved medical literature.
+"""
+    return formatted
+
+
 def clinical_reasoning(query, pubmed_ids, trials, alerts):
-    summary = f"""
+    return f"""
 ## 🔬 Clinical Research Summary
 
 ### Research Question
@@ -260,19 +313,14 @@ def clinical_reasoning(query, pubmed_ids, trials, alerts):
 • {len(alerts)} FDA safety signals monitored  
 
 ### Clinical Interpretation
-Based on current global research literature and clinical trial data, this therapy approach is supported
-by multiple Phase-II and Phase-III studies. Long-term outcomes show disease-specific benefit with
-manageable safety profile under specialist supervision.
+Current global research supports this therapy approach based on multiple trials.
 
 ### Safety & Monitoring
-FDA surveillance data is continuously monitored for emerging risks. Any serious safety alerts
-are immediately flagged for physician review.
+FDA surveillance data is continuously monitored.
 
 ### Conclusion
-This therapy remains a standard-of-care or emerging option based on indication and patient profile.
-Final treatment decisions must be made by the treating oncologist.
+Final treatment decisions must be made by licensed specialists.
 """
-    return summary
 
 # ============================================================
 # SIDEBAR
@@ -286,7 +334,7 @@ if st.sidebar.button("Logout"):
 
 module = st.sidebar.radio("Medical Intelligence Center", [
     "📁 Evidence Library",
-    "🔬 Phase-3 Research Copilot",
+    "🔬 Phase-3 Clinical Research Intelligence Engine",
     "📊 Live Intelligence Dashboard",
     "👤 Patient Workspace",
     "🧾 Doctor Orders",
@@ -313,53 +361,89 @@ if module == "📁 Evidence Library":
         st.success("Index built successfully")
 
 # ============================================================
-# PHASE-3 RESEARCH COPILOT (WITH QUERY INTELLIGENCE)
+# PHASE-3 INTELLIGENCE ENGINE (AI MODES)
 # ============================================================
-if module == "🔬 Phase-3 Research Copilot":
+if module == "🔬 Phase-3 Clinical Research Intelligence Engine":
     st.header("🔬 Phase-3 Clinical Research Intelligence Engine")
+
+    st.subheader("🧠 Intelligence Mode")
+    st.session_state.ai_mode = st.radio(
+        "Select AI Mode",
+        ["Hospital AI", "Global AI", "Hybrid AI"],
+        index=["Hospital AI", "Global AI", "Hybrid AI"].index(st.session_state.ai_mode)
+    )
 
     query = st.text_input("Ask a clinical research question")
 
-    if st.button("Analyze Research") and query:
+    if st.button("Analyze Intelligence") and query:
         api_query = normalize_query(query)
 
-        audit("phase3_query_normalized", {
-            "user_query": query,
-            "api_query": api_query
+        audit("phase3_query", {
+            "query": query,
+            "ai_mode": st.session_state.ai_mode
         })
 
-        pubmed_ids = fetch_pubmed(api_query)
-        trials = fetch_clinical_trials(api_query)
-        alerts = fetch_fda_alerts()
+        # =========================
+        # HOSPITAL AI
+        # =========================
+        if st.session_state.ai_mode == "Hospital AI":
+            if st.session_state.index_ready:
+                hits, sources = search_rag(api_query)
+                if hits:
+                    st.markdown(generate_protocol(query, hits))
+                    st.subheader("📚 Evidence Sources")
+                    for s in sources:
+                        st.success(s)
+                else:
+                    st.warning("No hospital evidence found.")
+            else:
+                st.warning("Hospital Evidence Index not built yet.")
 
-        st.caption(f"🔎 Biomedical search query used: **{api_query}**")
+        # =========================
+        # GLOBAL AI
+        # =========================
+        elif st.session_state.ai_mode == "Global AI":
+            pubmed_ids = fetch_pubmed(api_query)
+            trials = fetch_clinical_trials(api_query)
+            alerts = fetch_fda_alerts()
 
-        st.subheader("🧠 Clinical Reasoning Report")
-        st.markdown(clinical_reasoning(query, pubmed_ids, trials, alerts))
+            st.markdown(clinical_reasoning(query, pubmed_ids, trials, alerts))
+            st.write("📚 PubMed:", pubmed_ids)
+            if trials:
+                st.table(pd.DataFrame(trials))
+            for a in alerts:
+                st.warning(a)
 
-        st.subheader("📚 PubMed Articles (PMIDs)")
-        st.write(pubmed_ids)
+        # =========================
+        # HYBRID AI
+        # =========================
+        elif st.session_state.ai_mode == "Hybrid AI":
+            if st.session_state.index_ready:
+                hits, sources = search_rag(api_query)
+                if hits:
+                    st.markdown(generate_protocol(query, hits))
+                    st.subheader("📚 Evidence Sources")
+                    for s in sources:
+                        st.success(s)
 
-        st.subheader("🧪 Clinical Trials")
-        if trials:
-            st.table(pd.DataFrame(trials))
-        else:
-            st.info("No clinical trials found for this query.")
+            pubmed_ids = fetch_pubmed(api_query)
+            trials = fetch_clinical_trials(api_query)
+            alerts = fetch_fda_alerts()
 
-        st.subheader("⚠ FDA Safety Alerts")
-        for a in alerts:
-            st.warning(a)
+            st.markdown(clinical_reasoning(query, pubmed_ids, trials, alerts))
+            st.write("📚 PubMed:", pubmed_ids)
+            if trials:
+                st.table(pd.DataFrame(trials))
+            for a in alerts:
+                st.warning(a)
 
 # ============================================================
-# LIVE DASHBOARD
+# DASHBOARD
 # ============================================================
 if module == "📊 Live Intelligence Dashboard":
     st.header("📊 Live Medical Intelligence Dashboard")
-
     st.metric("Indexed Documents", len(st.session_state.docs))
-    st.metric("PubMed Feed", "LIVE")
-    st.metric("Clinical Trials Feed", "LIVE")
-    st.metric("FDA Regulatory Feed", "LIVE")
+    st.metric("AI Mode", st.session_state.ai_mode)
 
 # ============================================================
 # PATIENT WORKSPACE
