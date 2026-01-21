@@ -63,7 +63,6 @@ defaults = {
     "srcs": [],
     "ai_mode": "Hybrid AI"
 }
-
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -208,12 +207,10 @@ def fetch_fda_alerts():
     return alerts
 
 # ============================================================
-# CLINICAL ANSWER ENGINE
+# CLINICAL PROTOCOL ENGINE
 # ============================================================
 def clinical_answer(query, evidence):
     text = " ".join(evidence[:4])
-
-    # Clean and extract meaningful protocol lines
     lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 40]
     steps = lines[:10]
 
@@ -228,7 +225,7 @@ def clinical_answer(query, evidence):
 ### 1️⃣ Initial Clinical Assessment
 """
 
-    for i, step in enumerate(steps[:3], 1):
+    for step in steps[:3]:
         formatted += f"• {step}\n"
 
     formatted += """
@@ -256,33 +253,15 @@ def clinical_answer(query, evidence):
 ---
 
 ### ⚠ Safety & Compliance Checklist
-• Follow hospital SOP and NDMA disaster guidelines  
+• Follow hospital SOP and NDMA guidelines  
 • Activate Emergency Control Room  
 • Ensure senior physician supervision  
 • Maintain patient triage and tagging  
 • Document all clinical actions  
-• Coordinate with administration  
 
 ---
 
-### 📋 Clinical Governance
-• Approved by Hospital Clinical Board  
-• Auditable under NABH / MoHFW standards  
-• Compliant with National Disaster Protocols  
-
----
-
-🔒 This protocol is generated from hospital-approved medical literature and SOPs.
-"""
-
-    return formatted
-### Safety & Compliance
-• Follow hospital SOP and NDMA guidelines  
-• Ensure senior physician supervision  
-• Document all actions  
-• Activate disaster response if required  
-
-⚠ This protocol is derived from hospital-approved medical literature.
+🔒 Protocol derived from hospital-approved medical literature.
 """
 
     return formatted
@@ -362,26 +341,6 @@ if module == "🔬 Clinical Research Copilot":
             trials = fetch_trials(query)
             alerts = fetch_fda_alerts()
 
-            st.markdown(f"""
-## 🧠 Clinical Research Intelligence Report
-
-### Research Question
-{query}
-
-### Evidence Overview
-• {len(pubmed)} PubMed indexed studies  
-• {len(trials)} Clinical trials reviewed  
-• {len(alerts)} FDA safety signals monitored  
-
-### Clinical Interpretation
-Based on current global research literature and clinical trial data, this therapy approach is supported
-by multiple Phase-II and Phase-III studies. Long-term outcomes show disease-specific benefit with
-manageable safety profile under specialist supervision.
-
-### Conclusion
-Final treatment decisions must be made by the treating physician.
-""")
-
             st.subheader("📚 PubMed Articles")
             st.write(pubmed)
 
@@ -435,4 +394,3 @@ if module == "🕒 Audit & Compliance":
 # FOOTER
 # ============================================================
 st.caption("ĀROGYABODHA AI — National Clinical Decision Intelligence OS")
-
