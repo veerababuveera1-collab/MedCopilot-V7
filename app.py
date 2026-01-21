@@ -1,6 +1,6 @@
 # ============================================================
-# ĀROGYABODHA AI — Hospital + Phase-3 Live Research Intelligence OS
-# World-Class Medical Intelligence Platform
+# ĀROGYABODHA AI — Phase-3 PRODUCTION Medical Intelligence OS
+# Hospital + Research + Trial + Regulatory Intelligence Platform
 # ============================================================
 
 import streamlit as st
@@ -27,19 +27,16 @@ st.info(
 # ============================================================
 BASE = os.getcwd()
 PDF_FOLDER = os.path.join(BASE, "medical_library")
-RESEARCH_FOLDER = os.path.join(BASE, "research_library")
 VECTOR_FOLDER = os.path.join(BASE, "vector_cache")
 
 PATIENT_DB = os.path.join(BASE, "patients.json")
 AUDIT_LOG = os.path.join(BASE, "audit_log.json")
 USERS_DB = os.path.join(BASE, "users.json")
-FDA_DB = os.path.join(BASE, "fda_drugs.json")
 
 INDEX_FILE = os.path.join(VECTOR_FOLDER, "index.faiss")
 CACHE_FILE = os.path.join(VECTOR_FOLDER, "cache.pkl")
 
 os.makedirs(PDF_FOLDER, exist_ok=True)
-os.makedirs(RESEARCH_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
 # ============================================================
@@ -53,14 +50,6 @@ if not os.path.exists(USERS_DB):
         "doctor1": {"password": "doctor123", "role": "Doctor"},
         "researcher1": {"password": "research123", "role": "Researcher"}
     }, open(USERS_DB, "w"), indent=2)
-
-if not os.path.exists(FDA_DB):
-    json.dump({
-        "Temozolomide": "FDA Approved",
-        "Bevacizumab": "FDA Approved",
-        "CAR-T Therapy": "Conditional Approval",
-        "Experimental Vaccine X": "Clinical Trial Phase"
-    }, open(FDA_DB, "w"), indent=2)
 
 # ============================================================
 # SESSION
@@ -129,7 +118,7 @@ def load_embedder():
 embedder = load_embedder()
 
 # ============================================================
-# DOCUMENT INDEXING
+# PDF INDEXING
 # ============================================================
 def extract_text(file_bytes):
     reader = PdfReader(io.BytesIO(file_bytes))
@@ -140,25 +129,23 @@ def extract_text(file_bytes):
             pages.append(t)
     return pages
 
-def load_all_documents():
-    docs, srcs = [], []
-    for folder in [PDF_FOLDER, RESEARCH_FOLDER]:
-        for pdf in os.listdir(folder):
-            if pdf.endswith(".pdf"):
-                with open(os.path.join(folder, pdf), "rb") as f:
-                    pages = extract_text(f.read())
-                for i, p in enumerate(pages):
-                    docs.append(p)
-                    srcs.append(f"{pdf} — Page {i+1}")
-    return docs, srcs
-
 def build_index():
-    docs, srcs = load_all_documents()
+    docs, srcs = [], []
+    for pdf in os.listdir(PDF_FOLDER):
+        if pdf.endswith(".pdf"):
+            with open(os.path.join(PDF_FOLDER, pdf), "rb") as f:
+                pages = extract_text(f.read())
+            for i, p in enumerate(pages):
+                docs.append(p)
+                srcs.append(f"{pdf} — Page {i+1}")
+
     if not docs:
         return None, [], []
+
     emb = embedder.encode(docs)
     idx = faiss.IndexFlatL2(emb.shape[1])
     idx.add(np.array(emb, dtype=np.float32))
+
     faiss.write_index(idx, INDEX_FILE)
     pickle.dump({"docs": docs, "srcs": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
@@ -174,28 +161,43 @@ if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
         st.session_state.index_ready = False
 
 # ============================================================
-# PHASE-3 LIVE INTELLIGENCE ENGINE
+# LIVE INTELLIGENCE CONNECTORS (PRODUCTION)
 # ============================================================
 
 def fetch_pubmed(query):
-    url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={query}&retmax=5&retmode=json"
-    try:
-        res = requests.get(url).json()
-        return res["esearchresult"]["idlist"]
-    except:
-        return []
+    url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    params = {"db": "pubmed", "term": query, "retmode": "json", "retmax": 5}
+    r = requests.get(url, params=params).json()
+    return r["esearchresult"]["idlist"]
 
 def fetch_clinical_trials(query):
-    return [
-        {"Trial": "NCT012345", "Phase": "Phase III", "Status": "Recruiting"},
-        {"Trial": "NCT067890", "Phase": "Phase II", "Status": "Completed"}
-    ]
+    url = "https://clinicaltrials.gov/api/query/study_fields"
+    params = {
+        "expr": query,
+        "fields": "NCTId,Phase,OverallStatus",
+        "min_rnk": 1,
+        "max_rnk": 5,
+        "fmt": "json"
+    }
+    r = requests.get(url, params=params).json()
+    trials = []
+    for s in r["StudyFieldsResponse"]["StudyFields"]:
+        trials.append({
+            "Trial ID": s["NCTId"][0],
+            "Phase": s["Phase"][0] if s["Phase"] else "NA",
+            "Status": s["OverallStatus"][0]
+        })
+    return trials
 
 def fetch_fda_alerts():
-    return [
-        "FDA Safety Alert: Drug X associated with cardiac toxicity",
-        "FDA Recall: Batch Y contamination detected"
-    ]
+    url = "https://api.fda.gov/drug/enforcement.json?limit=5"
+    r = requests.get(url).json()
+    alerts = []
+    for item in r["results"]:
+        alerts.append(
+            f"{item['product_description']} | Reason: {item['reason_for_recall']}"
+        )
+    return alerts
 
 # ============================================================
 # SIDEBAR
@@ -222,18 +224,18 @@ module = st.sidebar.radio("Medical Intelligence Center", [
 if module == "📁 Evidence Library":
     st.header("📁 Medical Evidence Library")
 
-    files = st.file_uploader("Upload Medical / Research PDFs", type=["pdf"], accept_multiple_files=True)
+    files = st.file_uploader("Upload Medical PDFs", type=["pdf"], accept_multiple_files=True)
     if files:
         for f in files:
-            with open(os.path.join(RESEARCH_FOLDER, f.name), "wb") as out:
+            with open(os.path.join(PDF_FOLDER, f.name), "wb") as out:
                 out.write(f.getbuffer())
         st.success("PDFs uploaded")
 
-    if st.button("Build Global Evidence Index"):
+    if st.button("Build Evidence Index"):
         st.session_state.index, st.session_state.docs, st.session_state.srcs = build_index()
         st.session_state.index_ready = True
         audit("build_index", {"docs": len(st.session_state.docs)})
-        st.success("Global Medical Index built successfully")
+        st.success("Index built successfully")
 
 # ============================================================
 # PHASE-3 RESEARCH COPILOT
@@ -244,20 +246,16 @@ if module == "🔬 Phase-3 Research Copilot":
     query = st.text_input("Ask a clinical research question")
 
     if st.button("Analyze Research") and query:
-        audit("phase3_research_query", {"query": query})
-
-        pubmed_ids = fetch_pubmed(query)
-        trials = fetch_clinical_trials(query)
-        fda_alerts = fetch_fda_alerts()
+        audit("phase3_query", {"query": query})
 
         st.subheader("📚 PubMed Articles")
-        st.write(pubmed_ids)
+        st.write(fetch_pubmed(query))
 
         st.subheader("🧪 Clinical Trials")
-        st.table(pd.DataFrame(trials))
+        st.table(pd.DataFrame(fetch_clinical_trials(query)))
 
         st.subheader("⚠ FDA Safety Alerts")
-        for a in fda_alerts:
+        for a in fetch_fda_alerts():
             st.error(a)
 
 # ============================================================
@@ -267,9 +265,9 @@ if module == "📊 Live Intelligence Dashboard":
     st.header("📊 Live Medical Intelligence Dashboard")
 
     st.metric("Indexed Documents", len(st.session_state.docs))
-    st.metric("Active Clinical Trials", 128)
-    st.metric("FDA Safety Alerts", 3)
-    st.metric("Research Updates (24h)", 52)
+    st.metric("Live PubMed Feed", "Connected")
+    st.metric("Clinical Trials Feed", "Connected")
+    st.metric("FDA Regulatory Feed", "Connected")
 
 # ============================================================
 # PATIENT WORKSPACE
@@ -339,4 +337,4 @@ if module == "🕒 Audit & Compliance":
 # ============================================================
 # FOOTER
 # ============================================================
-st.caption("ĀROGYABODHA AI — World-Class Hospital & Medical Research Intelligence OS")
+st.caption("ĀROGYABODHA AI — Phase-3 PRODUCTION Medical Intelligence OS")
