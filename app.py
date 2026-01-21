@@ -1,6 +1,6 @@
 # ============================================================
-# ĀROGYABODHA AI — Hospital Clinical Decision Support System
-# Full End-to-End Clinical Operating Platform
+# ĀROGYABODHA AI — Hospital Clinical Care + Decision Support OS
+# Full End-to-End Hospital Operating Platform
 # ============================================================
 
 import streamlit as st
@@ -14,22 +14,23 @@ from pypdf import PdfReader
 # ============================================================
 # CONFIG
 # ============================================================
-st.set_page_config(page_title="ĀROGYABODHA AI — Hospital CDSS",
-                   page_icon="🧠",
-                   layout="wide")
+st.set_page_config("ĀROGYABODHA AI — Hospital OS", "🧠", layout="wide")
 
-st.info("ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS). "
-        "It does NOT provide diagnosis or treatment. "
-        "Final decisions must be made by licensed doctors.")
+st.info(
+    "ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS). "
+    "It does NOT provide diagnosis or treatment. "
+    "Final decisions must be made by licensed doctors."
+)
 
 # ============================================================
 # STORAGE
 # ============================================================
 BASE = os.getcwd()
 PDF_FOLDER = os.path.join(BASE, "medical_library")
+VECTOR_FOLDER = os.path.join(BASE, "vector_cache")
 PATIENT_DB = os.path.join(BASE, "patients.json")
 AUDIT_LOG = os.path.join(BASE, "audit_log.json")
-VECTOR_FOLDER = os.path.join(BASE, "vector_cache")
+USERS_DB = os.path.join(BASE, "users.json")
 
 INDEX_FILE = os.path.join(VECTOR_FOLDER, "index.faiss")
 CACHE_FILE = os.path.join(VECTOR_FOLDER, "cache.pkl")
@@ -37,26 +38,32 @@ CACHE_FILE = os.path.join(VECTOR_FOLDER, "cache.pkl")
 os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
+# Init DBs
 if not os.path.exists(PATIENT_DB):
     json.dump([], open(PATIENT_DB, "w"), indent=2)
 
-# ============================================================
-# MODEL
-# ============================================================
-@st.cache_resource
-def load_embedder():
-    return SentenceTransformer("all-MiniLM-L6-v2")
-
-embedder = load_embedder()
+if not os.path.exists(USERS_DB):
+    json.dump({
+        "doctor1": {"password": "doctor123", "role": "Doctor"},
+        "researcher1": {"password": "research123", "role": "Researcher"}
+    }, open(USERS_DB, "w"), indent=2)
 
 # ============================================================
 # SESSION
 # ============================================================
-if "index_ready" not in st.session_state:
-    st.session_state.index_ready = False
+defaults = {
+    "logged_in": False,
+    "username": None,
+    "role": None,
+    "index_ready": False,
+    "index": None,
+    "docs": [],
+    "srcs": []
+}
 
-if "index" not in st.session_state:
-    st.session_state.index = None
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # ============================================================
 # AUDIT
@@ -67,10 +74,46 @@ def audit(event, meta=None):
         logs = json.load(open(AUDIT_LOG))
     logs.append({
         "time": str(datetime.datetime.now()),
+        "user": st.session_state.username,
+        "role": st.session_state.role,
         "event": event,
         "meta": meta or {}
     })
     json.dump(logs, open(AUDIT_LOG, "w"), indent=2)
+
+# ============================================================
+# LOGIN
+# ============================================================
+def login_ui():
+    st.title("ĀROGYABODHA AI — Secure Hospital Login")
+    with st.form("login"):
+        u = st.text_input("User ID")
+        p = st.text_input("Password", type="password")
+        ok = st.form_submit_button("Login")
+
+    if ok:
+        users = json.load(open(USERS_DB))
+        if u in users and users[u]["password"] == p:
+            st.session_state.logged_in = True
+            st.session_state.username = u
+            st.session_state.role = users[u]["role"]
+            audit("login", {"user": u})
+            st.rerun()
+        else:
+            st.error("Invalid credentials")
+
+if not st.session_state.logged_in:
+    login_ui()
+    st.stop()
+
+# ============================================================
+# MODEL
+# ============================================================
+@st.cache_resource
+def load_embedder():
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+embedder = load_embedder()
 
 # ============================================================
 # PDF + FAISS
@@ -106,11 +149,18 @@ def build_index():
 
     return idx, docs, srcs
 
-if os.path.exists(INDEX_FILE):
+# Load existing index
+if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
     st.session_state.index = faiss.read_index(INDEX_FILE)
     cache = pickle.load(open(CACHE_FILE, "rb"))
-    st.session_state.docs = cache["docs"]
-    st.session_state.srcs = cache["srcs"]
+
+    if "docs" in cache:
+        st.session_state.docs = cache["docs"]
+        st.session_state.srcs = cache["srcs"]
+    elif "documents" in cache:
+        st.session_state.docs = cache["documents"]
+        st.session_state.srcs = cache["sources"]
+
     st.session_state.index_ready = True
 
 # ============================================================
@@ -120,7 +170,7 @@ SYMPTOMS = {
     "fever": ["Infection", "Malaria", "Dengue"],
     "chest pain": ["Heart attack", "Gastritis", "Anxiety"],
     "breathlessness": ["Asthma", "Heart failure", "Pneumonia"],
-    "fatigue": ["Anemia", "Diabetes", "Thyroid disorder"],
+    "fatigue": ["Anemia", "Diabetes"],
     "vomiting": ["Food poisoning", "Liver disease"]
 }
 
@@ -137,8 +187,16 @@ TESTS = {
     "fever": ["CBC", "Malaria Test", "Dengue NS1"],
     "chest pain": ["ECG", "Troponin"],
     "breathlessness": ["Chest X-Ray", "SpO2"],
-    "fatigue": ["CBC", "TSH"],
+    "fatigue": ["CBC", "Blood Sugar"],
     "vomiting": ["LFT", "RFT"]
+}
+
+TREATMENT_PROTOCOLS = {
+    "Heart attack": ["Aspirin", "ECG Monitoring", "ICU Admission"],
+    "Dengue": ["IV Fluids", "Platelet Monitoring"],
+    "Pneumonia": ["Antibiotics", "Oxygen Therapy"],
+    "Malaria": ["Antimalarial Therapy"],
+    "Anemia": ["Iron Therapy"]
 }
 
 RED_FLAGS = ["chest pain", "breathlessness", "unconscious", "high fever"]
@@ -165,27 +223,30 @@ def get_tests(symptoms):
         t.extend(TESTS.get(s, []))
     return list(set(t))
 
+def get_treatments(causes):
+    t = []
+    for c in causes:
+        t.extend(TREATMENT_PROTOCOLS.get(c, []))
+    return list(set(t))
+
 def get_redflags(symptoms):
     return [s for s in symptoms if s in RED_FLAGS]
 
-def retrieve_evidence(q):
-    qemb = embedder.encode(q)
-    qvec = np.array([qemb], dtype=np.float32)
-    D, I = st.session_state.index.search(qvec, 5)
-    context = "\n\n".join([st.session_state.docs[i] for i in I[0]])
-    sources = [st.session_state.srcs[i] for i in I[0]]
-    return context, sources
-
 # ============================================================
-# UI SIDEBAR
+# SIDEBAR
 # ============================================================
-st.sidebar.title("🏥 Hospital Command Center")
+st.sidebar.markdown(f"👨‍⚕️ **{st.session_state.username}** ({st.session_state.role})")
 
-module = st.sidebar.radio("Navigate", [
+if st.sidebar.button("Logout"):
+    audit("logout")
+    st.session_state.logged_in = False
+    st.rerun()
+
+module = st.sidebar.radio("Hospital Command Center", [
     "📁 Evidence Library",
     "👤 Patient Workspace",
     "🔬 Clinical Copilot",
-    "🧪 Lab Intelligence",
+    "🧾 Doctor Orders",
     "🕒 Audit & Compliance"
 ])
 
@@ -206,7 +267,7 @@ if module == "📁 Evidence Library":
         st.session_state.index, st.session_state.docs, st.session_state.srcs = build_index()
         st.session_state.index_ready = True
         audit("build_index", {"docs": len(st.session_state.docs)})
-        st.success("Index built")
+        st.success("Index built successfully")
 
     st.markdown("🟢 Index Ready" if st.session_state.index_ready else "🔴 Index Not Built")
 
@@ -232,6 +293,7 @@ if module == "👤 Patient Workspace":
             "age": age,
             "gender": gender,
             "symptoms": symptoms,
+            "timeline": [],
             "time": str(datetime.datetime.now())
         }
         patients.append(case)
@@ -240,7 +302,7 @@ if module == "👤 Patient Workspace":
         st.success("Patient case created")
 
     st.subheader("Active Cases")
-    st.dataframe(pd.DataFrame(patients))
+    st.dataframe(pd.DataFrame(patients), use_container_width=True)
 
 # ============================================================
 # CLINICAL COPILOT
@@ -248,18 +310,18 @@ if module == "👤 Patient Workspace":
 if module == "🔬 Clinical Copilot":
     st.header("🔬 Clinical Reasoning Engine")
 
-    query = st.text_input("Enter patient symptoms or clinical question")
+    query = st.text_input("Enter patient symptoms")
 
     if st.button("Analyze") and query:
-
         symptoms = extract_symptoms(query)
         causes = get_causes(symptoms)
         risks = get_risk(causes)
         tests = get_tests(symptoms)
         flags = get_redflags(symptoms)
+        treatments = get_treatments(causes)
 
         st.subheader("Clinical Summary")
-        st.write("Symptoms detected:", symptoms)
+        st.write("Symptoms:", symptoms)
 
         st.subheader("Possible Causes & Risk")
         for c in causes:
@@ -274,30 +336,37 @@ if module == "🔬 Clinical Copilot":
         for t in tests:
             st.write("•", t)
 
-        if st.session_state.index_ready:
-            context, sources = retrieve_evidence(query)
-            st.subheader("Hospital Evidence")
-            st.write(context[:2000] + "...")
-
-            st.subheader("Sources")
-            for s in sources:
-                st.info(s)
+        st.subheader("Standard Treatment Protocols")
+        for tr in treatments:
+            st.write("•", tr)
 
         audit("clinical_analysis", {"query": query})
 
 # ============================================================
-# LAB
+# DOCTOR ORDERS
 # ============================================================
-if module == "🧪 Lab Intelligence":
-    st.header("🧪 Lab Report Upload")
+if module == "🧾 Doctor Orders":
+    st.header("🧾 Doctor Orders & Care Actions")
 
-    lab = st.file_uploader("Upload Lab Report", type=["pdf", "jpg", "png"])
-    if lab:
-        path = os.path.join(BASE, lab.name)
-        with open(path, "wb") as out:
-            out.write(lab.getbuffer())
-        audit("lab_upload", {"file": lab.name})
-        st.success("Lab uploaded")
+    patients = json.load(open(PATIENT_DB))
+
+    if not patients:
+        st.info("No patients available.")
+    else:
+        pid = st.selectbox("Select Patient ID", [p["id"] for p in patients])
+        order = st.text_area("Enter Doctor Order (Treatment / Admission / Referral)")
+
+        if st.button("Submit Order"):
+            for p in patients:
+                if p["id"] == pid:
+                    p["timeline"].append({
+                        "time": str(datetime.datetime.now()),
+                        "doctor": st.session_state.username,
+                        "order": order
+                    })
+            json.dump(patients, open(PATIENT_DB, "w"), indent=2)
+            audit("doctor_order", {"patient_id": pid, "order": order})
+            st.success("Doctor order recorded")
 
 # ============================================================
 # AUDIT
@@ -308,6 +377,8 @@ if module == "🕒 Audit & Compliance":
     if os.path.exists(AUDIT_LOG):
         df = pd.DataFrame(json.load(open(AUDIT_LOG)))
         st.dataframe(df, use_container_width=True)
+    else:
+        st.info("No audit logs yet.")
 
 # ============================================================
 # FOOTER
