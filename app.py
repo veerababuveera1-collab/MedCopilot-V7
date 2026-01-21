@@ -1,388 +1,332 @@
 # ============================================================
-# ĀROGYABODHA AI — Phase-3 PRODUCTION Medical Intelligence OS
-# Hospital + Research + Trial + Regulatory + Clinical Reasoning Platform
+# ĀROGYABODHA AI — Medical Intelligence OS (Enterprise UI)
+# Hospital-Grade Clinical Research Copilot (CDSS)
 # ============================================================
 
 import streamlit as st
-import os, json, pickle, datetime, io, requests, textwrap
+import os, json, datetime, hashlib, uuid, requests
 import numpy as np
 import faiss
-import pandas as pd
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
 
-# ============================================================
-# CONFIG
-# ============================================================
-st.set_page_config("ĀROGYABODHA AI — Medical Intelligence OS", "🧠", layout="wide")
-
-st.info(
-    "ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS). "
-    "It does NOT provide diagnosis or treatment. "
-    "Final decisions must be made by licensed doctors."
+# ----------------------------- CONFIG -----------------------------
+st.set_page_config(
+    page_title="ĀROGYABODHA AI — Medical Intelligence OS",
+    page_icon="🧠",
+    layout="wide",
 )
 
-# ============================================================
-# STORAGE
-# ============================================================
-BASE = os.getcwd()
-PDF_FOLDER = os.path.join(BASE, "medical_library")
-VECTOR_FOLDER = os.path.join(BASE, "vector_cache")
+# ----------------------------- PATHS -----------------------------
+PDF_FOLDER = "medical_library"        # place hospital PDFs here
+AUDIT_LOG = "audit_ledger.json"       # immutable audit ledger
 
-PATIENT_DB = os.path.join(BASE, "patients.json")
-AUDIT_LOG = os.path.join(BASE, "audit_log.json")
-USERS_DB = os.path.join(BASE, "users.json")
+# ----------------------------- SESSION INIT -----------------------------
+if "username" not in st.session_state:
+    st.session_state.username = "doctor1"
+if "role" not in st.session_state:
+    st.session_state.role = "Doctor"
+if "doctor_id" not in st.session_state:
+    st.session_state.doctor_id = "DOC-001"
 
-INDEX_FILE = os.path.join(VECTOR_FOLDER, "index.faiss")
-CACHE_FILE = os.path.join(VECTOR_FOLDER, "cache.pkl")
+# ----------------------------- UTILITIES -----------------------------
+def ensure_dir(path):
+    if not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
 
-os.makedirs(PDF_FOLDER, exist_ok=True)
-os.makedirs(VECTOR_FOLDER, exist_ok=True)
+ensure_dir(PDF_FOLDER)
 
-# ============================================================
-# DATABASE INIT
-# ============================================================
-if not os.path.exists(PATIENT_DB):
-    json.dump([], open(PATIENT_DB, "w"), indent=2)
-
-if not os.path.exists(USERS_DB):
-    json.dump({
-        "doctor1": {"password": "doctor123", "role": "Doctor"},
-        "researcher1": {"password": "research123", "role": "Researcher"}
-    }, open(USERS_DB, "w"), indent=2)
-
-# ============================================================
-# SESSION
-# ============================================================
-defaults = {
-    "logged_in": False,
-    "username": None,
-    "role": None,
-    "index_ready": False,
-    "index": None,
-    "docs": [],
-    "srcs": []
-}
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
-
-# ============================================================
-# AUDIT
-# ============================================================
+# ----------------------------- AUDIT (IMMUTABLE LEDGER) -----------------------------
 def audit(event, meta=None):
     logs = []
     if os.path.exists(AUDIT_LOG):
-        logs = json.load(open(AUDIT_LOG))
-    logs.append({
-        "time": str(datetime.datetime.now()),
-        "user": st.session_state.username,
-        "role": st.session_state.role,
+        try:
+            with open(AUDIT_LOG, "r") as f:
+                logs = json.load(f)
+        except:
+            logs = []
+
+    previous_hash = logs[-1]["ledger_hash"] if logs else "GENESIS"
+    record = {
+        "audit_id": str(uuid.uuid4()),
+        "timestamp_utc": str(datetime.datetime.utcnow()),
+        "doctor_id": st.session_state.get("doctor_id", "unknown"),
+        "user": st.session_state.get("username", "unknown"),
+        "role": st.session_state.get("role", "unknown"),
         "event": event,
-        "meta": meta or {}
-    })
-    json.dump(logs, open(AUDIT_LOG, "w"), indent=2)
+        "meta": meta or {},
+        "previous_hash": previous_hash,
+    }
 
-# ============================================================
-# LOGIN
-# ============================================================
-def login_ui():
-    st.title("ĀROGYABODHA AI — Secure Medical Intelligence Login")
-    with st.form("login"):
-        u = st.text_input("User ID")
-        p = st.text_input("Password", type="password")
-        ok = st.form_submit_button("Login")
+    record["ledger_hash"] = hashlib.sha256(
+        json.dumps(record, sort_keys=True).encode()
+    ).hexdigest()
 
-    if ok:
-        users = json.load(open(USERS_DB))
-        if u in users and users[u]["password"] == p:
-            st.session_state.logged_in = True
-            st.session_state.username = u
-            st.session_state.role = users[u]["role"]
-            audit("login", {"user": u})
-            st.rerun()
-        else:
-            st.error("Invalid credentials")
+    logs.append(record)
+    with open(AUDIT_LOG, "w") as f:
+        json.dump(logs, f, indent=2)
 
-if not st.session_state.logged_in:
-    login_ui()
-    st.stop()
+# ----------------------------- HEADER -----------------------------
+st.markdown(
+    """
+# 🧠 ĀROGYABODHA AI — Medical Intelligence OS
+### Enterprise Clinical Research Copilot (CDSS)
+ℹ️ Research support only. Not a diagnosis or treatment system. Final decisions remain with licensed physicians.
+"""
+)
 
-# ============================================================
-# MODEL
-# ============================================================
+# ----------------------------- SIDEBAR (ENTERPRISE NAV) -----------------------------
+st.sidebar.title("🏥 Medical Intelligence Center")
+st.sidebar.metric("Doctor", st.session_state.username)
+st.sidebar.metric("Role", st.session_state.role)
+
+NAV = [
+    "📁 Evidence Library",
+    "🔬 Research Copilot",
+    "🧪 Clinical Trials",
+    "🧬 FDA Drug Intelligence",
+    "👤 Patient Cohorts",
+    "📊 Live Dashboard",
+    "🕒 Audit & Compliance",
+]
+page = st.sidebar.radio("Navigate", NAV)
+
+# ----------------------------- SYSTEM HEALTH -----------------------------
+st.sidebar.markdown("### 🩺 System Health")
+st.sidebar.write("UI Engine:", "Running")
+
+# ----------------------------- EMBEDDINGS -----------------------------
 @st.cache_resource
 def load_embedder():
-    return SentenceTransformer("all-MiniLM-L6-v2")
+    return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 embedder = load_embedder()
+st.sidebar.write("Embedding Model:", "Loaded")
 
-# ============================================================
-# PDF INDEXING
-# ============================================================
-def extract_text(file_bytes):
-    reader = PdfReader(io.BytesIO(file_bytes))
-    pages = []
-    for p in reader.pages[:200]:
-        t = p.extract_text()
-        if t and len(t) > 100:
-            pages.append(t)
-    return pages
+# ----------------------------- LOAD PDFs -----------------------------
+def load_pdfs(folder):
+    documents, sources = [], []
+    if not os.path.exists(folder):
+        return documents, sources
 
-def build_index():
-    docs, srcs = [], []
-    for pdf in os.listdir(PDF_FOLDER):
-        if pdf.endswith(".pdf"):
-            with open(os.path.join(PDF_FOLDER, pdf), "rb") as f:
-                pages = extract_text(f.read())
-            for i, p in enumerate(pages):
-                docs.append(p)
-                srcs.append(f"{pdf} — Page {i+1}")
+    pdfs = [f for f in os.listdir(folder) if f.lower().endswith(".pdf")]
+    for file in pdfs:
+        try:
+            reader = PdfReader(os.path.join(folder, file))
+            for i, page in enumerate(reader.pages):
+                text = page.extract_text()
+                if text and len(text) > 200:
+                    documents.append(text)
+                    sources.append(f"{file} — Page {i+1}")
+        except Exception as e:
+            st.warning(f"Skipped corrupted PDF: {file}")
+    return documents, sources
 
+documents, sources = load_pdfs(PDF_FOLDER)
+st.sidebar.write("Evidence Library:", "Loaded" if documents else "Not Loaded")
+
+# ----------------------------- VECTOR DB -----------------------------
+def build_index(docs):
     if not docs:
-        return None, [], []
-
+        return None
     emb = embedder.encode(docs)
-    idx = faiss.IndexFlatL2(emb.shape[1])
-    idx.add(np.array(emb, dtype=np.float32))
+    dim = emb.shape[1]
+    idx = faiss.IndexFlatL2(dim)
+    idx.add(np.array(emb).astype("float32"))
+    return idx
 
-    faiss.write_index(idx, INDEX_FILE)
-    pickle.dump({"docs": docs, "srcs": srcs}, open(CACHE_FILE, "wb"))
-    return idx, docs, srcs
+index = build_index(documents)
+st.sidebar.write("Vector Index:", "Ready" if index else "Not Built")
 
-if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
+# ----------------------------- CLINICAL TRIALS API -----------------------------
+def fetch_clinical_trials(query, limit=10):
+    url = (
+        "https://clinicaltrials.gov/api/query/study_fields"
+        f"?expr={query}&fields=NCTId,BriefTitle,Phase,OverallStatus"
+        f"&min_rnk=1&max_rnk={limit}&fmt=json"
+    )
     try:
-        st.session_state.index = faiss.read_index(INDEX_FILE)
-        cache = pickle.load(open(CACHE_FILE, "rb"))
-        st.session_state.docs = cache["docs"]
-        st.session_state.srcs = cache["srcs"]
-        st.session_state.index_ready = True
-    except:
-        st.session_state.index_ready = False
-
-# ============================================================
-# LIVE INTELLIGENCE CONNECTORS
-# ============================================================
-def fetch_pubmed(query):
-    try:
-        url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-        params = {"db": "pubmed", "term": query, "retmode": "json", "retmax": 5}
-        r = requests.get(url, params=params, timeout=10)
-        return r.json()["esearchresult"]["idlist"]
-    except:
-        return []
-
-def fetch_clinical_trials(query):
-    try:
-        url = "https://clinicaltrials.gov/api/v2/studies"
-        params = {"query.term": query, "pageSize": 5}
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, timeout=15)
         data = r.json()
-        trials = []
-        for study in data.get("studies", []):
-            proto = study.get("protocolSection", {})
-            ident = proto.get("identificationModule", {})
-            status = proto.get("statusModule", {})
-            design = proto.get("designModule", {})
-            trials.append({
-                "Trial ID": ident.get("nctId", "N/A"),
-                "Phase": ", ".join(design.get("phases", ["N/A"])),
-                "Status": status.get("overallStatus", "Unknown")
-            })
-        return trials[:5]
+        return data.get("StudyFieldsResponse", {}).get("StudyFields", [])
     except:
         return []
 
-def fetch_fda_alerts():
+# ----------------------------- FDA OPEN API -----------------------------
+def fetch_fda_drug_info(drug):
+    url = f"https://api.fda.gov/drug/label.json?search=openfda.brand_name:{drug}&limit=1"
     try:
-        url = "https://api.fda.gov/drug/enforcement.json?limit=5"
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=15)
         data = r.json()
-        alerts = []
-        for item in data.get("results", []):
-            alerts.append(
-                f"{item.get('product_description','Unknown Drug')} | "
-                f"Reason: {item.get('reason_for_recall','Safety Alert')}"
-            )
-        return alerts
+        return data.get("results", [None])[0]
     except:
-        return []
+        return None
 
-# ============================================================
-# CLINICAL REASONING ENGINE (NEW)
-# ============================================================
-def clinical_reasoning(query, pubmed_ids, trials, alerts):
-    summary = f"""
-## 🔬 Clinical Research Summary
+# ----------------------------- COHORT ANALYTICS -----------------------------
+def analyze_patient_cohort(age, diagnosis, biomarkers=None):
+    cohort = {
+        "age_group": "Senior (>=60)" if age >= 60 else "Adult (<60)",
+        "diagnosis": diagnosis,
+        "biomarkers": biomarkers or [],
+        "matched_trials": fetch_clinical_trials(diagnosis, limit=5),
+    }
+    return cohort
 
-### Research Question
-{query}
+# ============================= PAGES =============================
 
-### Evidence Overview
-• {len(pubmed_ids)} PubMed indexed studies  
-• {len(trials)} Clinical trials reviewed  
-• {len(alerts)} FDA safety signals monitored  
+# ---------- 📁 Evidence Library ----------
+if page == "📁 Evidence Library":
+    st.subheader("📁 Hospital Evidence Library")
 
-### Clinical Interpretation
-Based on current global research literature and clinical trial data, this therapy approach is supported
-by multiple Phase-II and Phase-III studies. Long-term outcomes show disease-specific benefit with
-manageable safety profile under specialist supervision.
+    with st.expander("Upload Hospital PDFs (Research / Guidelines / SOPs)"):
+        uploaded = st.file_uploader(
+            "Upload PDFs", type=["pdf"], accept_multiple_files=True
+        )
+        if uploaded:
+            for f in uploaded:
+                with open(os.path.join(PDF_FOLDER, f.name), "wb") as out:
+                    out.write(f.read())
+            st.success("Files uploaded. Rebuilding index...")
+            documents, sources = load_pdfs(PDF_FOLDER)
+            index = build_index(documents)
+            audit("EVIDENCE_UPLOAD", {"count": len(uploaded), "files": [f.name for f in uploaded]})
+            st.success("Evidence indexed successfully.")
 
-### Safety & Monitoring
-FDA surveillance data is continuously monitored for emerging risks. Any serious safety alerts
-are immediately flagged for physician review.
+    st.write("**Indexed Documents:**", len(documents))
+    if documents:
+        st.dataframe(
+            {"Source": sources[:50], "Preview": [d[:120] + "..." for d in documents[:50]]}
+        )
+    else:
+        st.info("No PDFs found. Upload hospital evidence to enable local RAG.")
 
-### Conclusion
-This therapy remains a standard-of-care or emerging option based on indication and patient profile.
-Final treatment decisions must be made by the treating oncologist.
+# ---------- 🔬 Research Copilot ----------
+elif page == "🔬 Research Copilot":
+    st.subheader("🔬 Phase-3 Clinical Research Copilot")
+    query = st.text_input("Ask a clinical research question:")
 
-"""
+    if query:
+        audit("CLINICAL_QUERY", {"query": query})
 
-    return summary
+        if index:
+            qemb = embedder.encode([query])
+            D, I = index.search(np.array(qemb).astype("float32"), 5)
+            context = "\n\n".join([documents[i] for i in I[0]])
+            used_sources = [sources[i] for i in I[0]]
 
-# ============================================================
-# SIDEBAR
-# ============================================================
-st.sidebar.markdown(f"👨‍⚕️ **{st.session_state.username}** ({st.session_state.role})")
+            st.markdown("### 🏥 Hospital Evidence-Based Answer")
+            st.write(context[:3500])
 
-if st.sidebar.button("Logout"):
-    audit("logout")
-    st.session_state.logged_in = False
-    st.rerun()
+            st.markdown("**Evidence Sources**")
+            for s in used_sources:
+                st.info(s)
 
-module = st.sidebar.radio("Medical Intelligence Center", [
-    "📁 Evidence Library",
-    "🔬 Phase-3 Research Copilot",
-    "📊 Live Intelligence Dashboard",
-    "👤 Patient Workspace",
-    "🧾 Doctor Orders",
-    "🕒 Audit & Compliance"
-])
+            audit("HOSPITAL_EVIDENCE_USED", {"sources": used_sources})
+            st.success("Mode: Hospital Evidence AI")
+        else:
+            st.warning("No local evidence found. Please upload PDFs in Evidence Library.")
 
-# ============================================================
-# EVIDENCE LIBRARY
-# ============================================================
-if module == "📁 Evidence Library":
-    st.header("📁 Medical Evidence Library")
+# ---------- 🧪 Clinical Trials ----------
+elif page == "🧪 Clinical Trials":
+    st.subheader("🧪 Clinical Trial Outcome Explorer")
+    q = st.text_input("Search condition / therapy (e.g., glioblastoma, Parkinson’s):")
 
-    files = st.file_uploader("Upload Medical PDFs", type=["pdf"], accept_multiple_files=True)
-    if files:
-        for f in files:
-            with open(os.path.join(PDF_FOLDER, f.name), "wb") as out:
-                out.write(f.getbuffer())
-        st.success("PDFs uploaded")
+    if q:
+        trials = fetch_clinical_trials(q, limit=15)
+        audit("TRIAL_SEARCH", {"query": q, "results": len(trials)})
 
-    if st.button("Build Evidence Index"):
-        st.session_state.index, st.session_state.docs, st.session_state.srcs = build_index()
-        st.session_state.index_ready = True
-        audit("build_index", {"docs": len(st.session_state.docs)})
-        st.success("Index built successfully")
+        if trials:
+            rows = []
+            for t in trials:
+                rows.append({
+                    "NCT ID": (t.get("NCTId") or [None])[0],
+                    "Title": (t.get("BriefTitle") or [None])[0],
+                    "Phase": (t.get("Phase") or [None])[0],
+                    "Status": (t.get("OverallStatus") or [None])[0],
+                })
+            st.dataframe(rows, use_container_width=True)
+        else:
+            st.info("No trials found for this query.")
 
-# ============================================================
-# PHASE-3 RESEARCH COPILOT (WITH REASONING)
-# ============================================================
-if module == "🔬 Phase-3 Research Copilot":
-    st.header("🔬 Phase-3 Clinical Research Intelligence Engine")
+# ---------- 🧬 FDA Drug Intelligence ----------
+elif page == "🧬 FDA Drug Intelligence":
+    st.subheader("🧬 FDA Drug Intelligence")
+    drug = st.text_input("Enter brand name (e.g., Levodopa, Semaglutide):")
 
-    query = st.text_input("Ask a clinical research question")
+    if drug:
+        info = fetch_fda_drug_info(drug)
+        audit("FDA_LOOKUP", {"drug": drug, "found": bool(info)})
 
-    if st.button("Analyze Research") and query:
-        audit("phase3_query", {"query": query})
+        if info:
+            st.success("FDA record found")
+            st.json(info)
+        else:
+            st.warning("No FDA label record found for this brand name.")
 
-        pubmed_ids = fetch_pubmed(query)
-        trials = fetch_clinical_trials(query)
-        alerts = fetch_fda_alerts()
+# ---------- 👤 Patient Cohorts ----------
+elif page == "👤 Patient Cohorts":
+    st.subheader("👤 Patient Cohort Analytics (De-identified)")
+    age = st.number_input("Patient Age", min_value=1, max_value=120, value=65)
+    diagnosis = st.text_input("Diagnosis / Condition")
+    biomarkers = st.text_input("Biomarkers (comma separated, optional)")
 
-        st.subheader("🧠 Clinical Reasoning Report")
-        st.markdown(clinical_reasoning(query, pubmed_ids, trials, alerts))
+    if st.button("Analyze Cohort"):
+        cohort = analyze_patient_cohort(
+            age,
+            diagnosis,
+            [b.strip() for b in biomarkers.split(",") if b.strip()],
+        )
+        audit("COHORT_ANALYSIS", cohort)
+        st.json(cohort)
 
-        st.subheader("📚 PubMed Articles")
-        st.write(pubmed_ids)
+# ---------- 📊 Live Dashboard ----------
+elif page == "📊 Live Dashboard":
+    st.subheader("📊 Live Intelligence Dashboard")
 
-        st.subheader("🧪 Clinical Trials")
-        st.table(pd.DataFrame(trials))
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Evidence Docs", len(documents))
+    col2.metric("Vector Index", "Ready" if index else "Not Built")
+    col3.metric("Audit Events", len(json.load(open(AUDIT_LOG))) if os.path.exists(AUDIT_LOG) else 0)
 
-        st.subheader("⚠ FDA Safety Alerts")
-        for a in alerts:
-            st.warning(a)
-
-# ============================================================
-# LIVE DASHBOARD
-# ============================================================
-if module == "📊 Live Intelligence Dashboard":
-    st.header("📊 Live Medical Intelligence Dashboard")
-
-    st.metric("Indexed Documents", len(st.session_state.docs))
-    st.metric("PubMed Feed", "LIVE")
-    st.metric("Clinical Trials Feed", "LIVE")
-    st.metric("FDA Regulatory Feed", "LIVE")
-
-# ============================================================
-# PATIENT WORKSPACE
-# ============================================================
-if module == "👤 Patient Workspace":
-    st.header("👤 Patient Case Workspace")
-
-    patients = json.load(open(PATIENT_DB))
-
-    with st.form("add_patient"):
-        name = st.text_input("Patient Name")
-        age = st.number_input("Age", 0, 120)
-        gender = st.selectbox("Gender", ["Male", "Female", "Other"])
-        symptoms = st.text_area("Symptoms")
-        submit = st.form_submit_button("Create Case")
-
-    if submit:
-        case = {
-            "id": len(patients)+1,
-            "name": name,
-            "age": age,
-            "gender": gender,
-            "symptoms": symptoms,
-            "timeline": [],
-            "time": str(datetime.datetime.now())
-        }
-        patients.append(case)
-        json.dump(patients, open(PATIENT_DB, "w"), indent=2)
-        audit("new_patient_case", case)
-        st.success("Patient case created")
-
-    st.dataframe(pd.DataFrame(patients), use_container_width=True)
-
-# ============================================================
-# DOCTOR ORDERS
-# ============================================================
-if module == "🧾 Doctor Orders":
-    st.header("🧾 Doctor Orders & Care Actions")
-
-    patients = json.load(open(PATIENT_DB))
-
-    if patients:
-        pid = st.selectbox("Select Patient ID", [p["id"] for p in patients])
-        order = st.text_area("Enter Doctor Order")
-
-        if st.button("Submit Order"):
-            for p in patients:
-                if p["id"] == pid:
-                    p["timeline"].append({
-                        "time": str(datetime.datetime.now()),
-                        "doctor": st.session_state.username,
-                        "order": order
-                    })
-            json.dump(patients, open(PATIENT_DB, "w"), indent=2)
-            audit("doctor_order", {"patient_id": pid, "order": order})
-            st.success("Doctor order recorded")
-
-# ============================================================
-# AUDIT
-# ============================================================
-if module == "🕒 Audit & Compliance":
-    st.header("🕒 Audit & Compliance")
+    st.markdown("### Recent Audit Events")
     if os.path.exists(AUDIT_LOG):
-        df = pd.DataFrame(json.load(open(AUDIT_LOG)))
-        st.dataframe(df, use_container_width=True)
+        logs = json.load(open(AUDIT_LOG))
+        st.dataframe(logs[-10:][::-1], use_container_width=True)
+    else:
+        st.info("No audit events yet.")
 
-# ============================================================
-# FOOTER
-# ============================================================
-st.caption("ĀROGYABODHA AI — Phase-3 PRODUCTION Medical Intelligence OS")
+# ---------- 🕒 Audit & Compliance ----------
+elif page == "🕒 Audit & Compliance":
+    st.subheader("🕒 Audit & Compliance (Immutable Ledger)")
+
+    st.info("ℹ️ CDSS only. Research support. Final decisions by licensed physicians.")
+
+    if os.path.exists(AUDIT_LOG):
+        logs = json.load(open(AUDIT_LOG))
+        st.metric("Total Clinical Events", len(logs))
+
+        with st.expander("View Audit Ledger"):
+            st.dataframe(logs[::-1], use_container_width=True)
+
+        with st.expander("Verify Ledger Integrity"):
+            ok = True
+            prev = "GENESIS"
+            for r in logs:
+                check = r.copy()
+                ledger_hash = check.pop("ledger_hash")
+                if check.get("previous_hash") != prev:
+                    ok = False
+                    break
+                calc = hashlib.sha256(json.dumps(check, sort_keys=True).encode()).hexdigest()
+                if calc != ledger_hash:
+                    ok = False
+                    break
+                prev = ledger_hash
+            st.success("Ledger verified") if ok else st.error("Ledger integrity failed")
+    else:
+        st.warning("No audit ledger found yet.")
+
+# ----------------------------- FOOTER -----------------------------
+st.sidebar.markdown("---")
+st.sidebar.info("ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS).")
+st.sidebar.info("Final clinical decisions must be made by licensed physicians.")
