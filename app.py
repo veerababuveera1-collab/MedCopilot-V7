@@ -42,6 +42,7 @@ os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(RESEARCH_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
+# Databases
 if not os.path.exists(PATIENT_DB):
     json.dump([], open(PATIENT_DB, "w"), indent=2)
 
@@ -51,7 +52,6 @@ if not os.path.exists(USERS_DB):
         "researcher1": {"password": "research123", "role": "Researcher"}
     }, open(USERS_DB, "w"), indent=2)
 
-# Demo FDA DB
 if not os.path.exists(FDA_DB):
     json.dump({
         "Temozolomide": "FDA Approved",
@@ -140,7 +140,6 @@ def extract_text(file_bytes):
 
 def load_all_documents():
     docs, srcs = [], []
-
     for folder in [PDF_FOLDER, RESEARCH_FOLDER]:
         for pdf in os.listdir(folder):
             if pdf.endswith(".pdf"):
@@ -155,16 +154,14 @@ def build_index():
     docs, srcs = load_all_documents()
     if not docs:
         return None, [], []
-
     emb = embedder.encode(docs)
     idx = faiss.IndexFlatL2(emb.shape[1])
     idx.add(np.array(emb, dtype=np.float32))
-
     faiss.write_index(idx, INDEX_FILE)
     pickle.dump({"docs": docs, "srcs": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
 
-# Load existing index
+# Load index
 if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
     try:
         st.session_state.index = faiss.read_index(INDEX_FILE)
@@ -202,21 +199,21 @@ def clinical_formatter(query, context, sources):
     srcs = "\n".join([f"• {s}" for s in sources])
 
     return f"""
-## 🏥 Clinical Overview — {query}
+## 🏥 Clinical Research Summary — {query}
 
-### 🔬 Research Summary
+### 🔬 Evidence Summary
 {short}
 
-### 🧪 Diagnosis
-Imaging, biopsy and molecular profiling based on protocol.
+### 💊 Treatment Landscape
+Based on recent clinical trials and international guidelines.
 
-### 💊 Treatment Options
-Based on latest trials and guidelines.
+### 🧪 Regulatory Status
+FDA approval varies by drug and indication.
 
-### 🚨 Red Flags
-• Rapid disease progression  
-• Neurological deficits  
-• Treatment resistance  
+### 🚨 Safety Signals
+• Disease progression  
+• Therapy resistance  
+• Adverse reactions  
 
 ### 📚 Evidence Sources
 {srcs}
@@ -244,14 +241,14 @@ module = st.sidebar.radio("Medical Intelligence Center", [
 # EVIDENCE LIBRARY
 # ============================================================
 if module == "📁 Evidence Library":
-    st.header("📁 Medical Evidence Library (Hospital + Research)")
+    st.header("📁 Medical Evidence Library")
 
     files = st.file_uploader("Upload Medical / Research PDFs", type=["pdf"], accept_multiple_files=True)
     if files:
         for f in files:
             with open(os.path.join(RESEARCH_FOLDER, f.name), "wb") as out:
                 out.write(f.getbuffer())
-        st.success("Research PDFs uploaded")
+        st.success("PDFs uploaded")
 
     if st.button("Build Global Evidence Index"):
         st.session_state.index, st.session_state.docs, st.session_state.srcs = build_index()
@@ -284,7 +281,6 @@ if module == "🔬 Research Copilot":
 
             st.markdown(clinical_formatter(query, context, sources))
 
-            # Treatment comparison demo
             demo_treatments = ["Temozolomide", "Bevacizumab", "CAR-T Therapy"]
             st.subheader("📊 Treatment Outcome Comparison")
             df = compare_treatments(demo_treatments)
@@ -335,7 +331,7 @@ if module == "🧾 Doctor Orders":
         st.info("No patients available.")
     else:
         pid = st.selectbox("Select Patient ID", [p["id"] for p in patients])
-        order = st.text_area("Enter Doctor Order (Treatment / Admission / Referral)")
+        order = st.text_area("Enter Doctor Order")
 
         if st.button("Submit Order"):
             for p in patients:
