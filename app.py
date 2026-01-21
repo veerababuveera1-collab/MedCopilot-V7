@@ -9,6 +9,7 @@ import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
+from xml.etree import ElementTree as ET
 
 # ----------------------------- CONFIG -----------------------------
 st.set_page_config(
@@ -82,8 +83,9 @@ st.sidebar.metric("Role", st.session_state.role)
 
 NAV = [
     "📁 Evidence Library",
-    "🔬 Research Copilot",
-    "🧪 Clinical Trials",
+    "🔬 Research Copilot (Hospital RAG)",
+    "🌐 PubMed Global Research (NIH)",
+    "🧪 Clinical Trials (Outcomes)",
     "🧬 FDA Drug Intelligence",
     "👤 Patient Cohorts",
     "📊 Live Dashboard",
@@ -118,7 +120,7 @@ def load_pdfs(folder):
                 if text and len(text) > 200:
                     documents.append(text)
                     sources.append(f"{file} — Page {i+1}")
-        except Exception as e:
+        except Exception:
             st.warning(f"Skipped corrupted PDF: {file}")
     return documents, sources
 
@@ -142,11 +144,11 @@ st.sidebar.write("Vector Index:", "Ready" if index else "Not Built")
 def fetch_clinical_trials(query, limit=10):
     url = (
         "https://clinicaltrials.gov/api/query/study_fields"
-        f"?expr={query}&fields=NCTId,BriefTitle,Phase,OverallStatus"
+        f"?expr={query}&fields=NCTId,BriefTitle,Phase,OverallStatus,Condition"
         f"&min_rnk=1&max_rnk={limit}&fmt=json"
     )
     try:
-        r = requests.get(url, timeout=15)
+        r = requests.get(url, timeout=20)
         data = r.json()
         return data.get("StudyFieldsResponse", {}).get("StudyFields", [])
     except:
@@ -156,7 +158,7 @@ def fetch_clinical_trials(query, limit=10):
 def fetch_fda_drug_info(drug):
     url = f"https://api.fda.gov/drug/label.json?search=openfda.brand_name:{drug}&limit=1"
     try:
-        r = requests.get(url, timeout=15)
+        r = requests.get(url, timeout=20)
         data = r.json()
         return data.get("results", [None])[0]
     except:
@@ -171,6 +173,67 @@ def analyze_patient_cohort(age, diagnosis, biomarkers=None):
         "matched_trials": fetch_clinical_trials(diagnosis, limit=5),
     }
     return cohort
+
+# ===================== PubMed (NIH) LIVE INTEGRATION =====================
+
+def pubmed_search(query, retmax=10):
+    """Search PubMed and return list of PMIDs"""
+    url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    params = {
+        "db": "pubmed",
+        "term": query,
+        "retmode": "json",
+        "retmax": retmax
+    }
+    try:
+        r = requests.get(url, params=params, timeout=25)
+        data = r.json()
+        return data.get("esearchresult", {}).get("idlist", [])
+    except:
+        return []
+
+def pubmed_fetch(pmids):
+    """Fetch PubMed abstracts by PMIDs"""
+    if not pmids:
+        return []
+
+    url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+    params = {
+        "db": "pubmed",
+        "id": ",".join(pmids),
+        "retmode": "xml"
+    }
+
+    try:
+        r = requests.get(url, params=params, timeout=30)
+        root = ET.fromstring(r.text)
+
+        articles = []
+        for article in root.findall(".//PubmedArticle"):
+            pmid = article.findtext(".//PMID")
+            title = article.findtext(".//ArticleTitle")
+            abstract = " ".join([a.text for a in article.findall(".//AbstractText") if a.text])
+            articles.append({
+                "PMID": pmid,
+                "Title": title,
+                "Abstract": abstract
+            })
+        return articles
+    except:
+        return []
+
+# ----------------------------- OUTCOME COMPARISON (from trials) -----------------------------
+def build_outcome_table(trials):
+    rows = []
+    for t in trials:
+        rows.append({
+            "NCT ID": (t.get("NCTId") or [None])[0],
+            "Title": (t.get("BriefTitle") or [None])[0],
+            "Phase": (t.get("Phase") or [None])[0],
+            "Status": (t.get("OverallStatus") or [None])[0],
+            "Condition": (t.get("Condition") or [None])[0],
+        })
+    return rows
 
 # ============================= PAGES =============================
 
@@ -200,9 +263,9 @@ if page == "📁 Evidence Library":
     else:
         st.info("No PDFs found. Upload hospital evidence to enable local RAG.")
 
-# ---------- 🔬 Research Copilot ----------
-elif page == "🔬 Research Copilot":
-    st.subheader("🔬 Phase-3 Clinical Research Copilot")
+# ---------- 🔬 Research Copilot (Hospital RAG) ----------
+elif page == "🔬 Research Copilot (Hospital RAG)":
+    st.subheader("🔬 Phase-3 Clinical Research Copilot (Hospital Evidence)")
     query = st.text_input("Ask a clinical research question:")
 
     if query:
@@ -226,25 +289,41 @@ elif page == "🔬 Research Copilot":
         else:
             st.warning("No local evidence found. Please upload PDFs in Evidence Library.")
 
-# ---------- 🧪 Clinical Trials ----------
-elif page == "🧪 Clinical Trials":
+# ---------- 🌐 PubMed Global Research (NIH) ----------
+elif page == "🌐 PubMed Global Research (NIH)":
+    st.subheader("🌐 PubMed Global Research (NIH Live)")
+    query = st.text_input("Search PubMed (e.g., Parkinson genetic markers):")
+
+    if query:
+        with st.spinner("🔍 Searching PubMed (NIH)..."):
+            pmids = pubmed_search(query, retmax=10)
+            articles = pubmed_fetch(pmids)
+
+        audit("PUBMED_SEARCH", {"query": query, "pmids": pmids})
+
+        if articles:
+            st.success(f"Found {len(articles)} PubMed articles")
+            for a in articles:
+                st.markdown(f"### 🧾 PMID: {a['PMID']}")
+                st.markdown(f"**Title:** {a['Title']}")
+                st.write(a["Abstract"][:3000])
+                st.markdown("---")
+        else:
+            st.warning("No PubMed articles found for this query.")
+
+# ---------- 🧪 Clinical Trials (Outcomes) ----------
+elif page == "🧪 Clinical Trials (Outcomes)":
     st.subheader("🧪 Clinical Trial Outcome Explorer")
     q = st.text_input("Search condition / therapy (e.g., glioblastoma, Parkinson’s):")
 
     if q:
-        trials = fetch_clinical_trials(q, limit=15)
+        trials = fetch_clinical_trials(q, limit=20)
         audit("TRIAL_SEARCH", {"query": q, "results": len(trials)})
 
         if trials:
-            rows = []
-            for t in trials:
-                rows.append({
-                    "NCT ID": (t.get("NCTId") or [None])[0],
-                    "Title": (t.get("BriefTitle") or [None])[0],
-                    "Phase": (t.get("Phase") or [None])[0],
-                    "Status": (t.get("OverallStatus") or [None])[0],
-                })
+            rows = build_outcome_table(trials)
             st.dataframe(rows, use_container_width=True)
+            st.caption("Outcome table derived from ClinicalTrials.gov fields (Phase, Status, Condition).")
         else:
             st.info("No trials found for this query.")
 
