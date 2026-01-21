@@ -241,87 +241,77 @@ def fetch_fda_alerts():
     except:
         return []
 
-# ============================================================
-# CLINICAL OUTPUT ENGINES
-# ============================================================
 def generate_protocol(query, evidence):
     text = " ".join(evidence[:3])
     lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 40]
-    steps = lines[:8]
+    steps = lines[:9]
 
-    formatted = f"""
-## 🏥 Hospital Clinical Decision Protocol
+    # Fallback if evidence is short
+    while len(steps) < 9:
+        steps.append("Follow standard hospital emergency protocol under senior physician supervision.")
 
-### Condition
-**{query.upper()}**
+    protocol_md = f"""
+<div style="background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
+            padding:25px;border-radius:18px;color:white;box-shadow:0 10px 30px rgba(0,0,0,0.3);">
 
----
+<h2 style="text-align:center;margin-bottom:5px;">🏥 HOSPITAL CLINICAL DECISION PROTOCOL</h2>
+<h4 style="text-align:center;color:#9fd6ff;margin-top:0;">AI Clinical Intelligence System</h4>
 
-### 1️⃣ Initial Clinical Assessment
+<hr style="border:1px solid #4fa3d1;">
+
+<h3 style="color:#ffd166;">🩺 Condition</h3>
+<h2 style="color:white;margin-top:0;">{query.upper()}</h2>
+
+<hr>
+
+<h3 style="color:#06d6a0;">1️⃣ Initial Clinical Assessment</h3>
+<ul>
+  <li>🧪 {steps[0]}</li>
+  <li>🩻 {steps[1]}</li>
+  <li>📋 {steps[2]}</li>
+</ul>
+
+<hr>
+
+<h3 style="color:#ef476f;">2️⃣ Emergency Response Actions</h3>
+<ul>
+  <li>🚨 {steps[3]}</li>
+  <li>💉 {steps[4]}</li>
+  <li>🩸 {steps[5]}</li>
+</ul>
+
+<hr>
+
+<h3 style="color:#ffd166;">3️⃣ Hospital Activation Protocol</h3>
+<ul>
+  <li>📞 {steps[6]}</li>
+  <li>🏥 {steps[7]}</li>
+  <li>👨‍⚕️ {steps[8]}</li>
+</ul>
+
+<hr>
+
+<h3 style="color:#f1faee;">⚠ Safety & Compliance</h3>
+
+<div style="background:#1d3557;padding:15px;border-radius:12px;">
+<ul>
+  <li>✔ Follow hospital SOP & national clinical guidelines</li>
+  <li>✔ Senior physician supervision mandatory</li>
+  <li>✔ Document all interventions & timelines</li>
+  <li>✔ Maintain patient triage & tagging</li>
+</ul>
+</div>
+
+<hr>
+
+<div style="text-align:center;color:#a8dadc;font-size:13px;">
+🔒 Protocol generated from hospital-approved medical literature  
+🧠 Powered by ĀROGYABODHA AI Clinical Intelligence OS  
+</div>
+
+</div>
 """
-
-    for step in steps[:3]:
-        formatted += f"• {step}\n"
-
-    formatted += """
-
----
-
-### 2️⃣ Emergency Response Actions
-"""
-
-    for step in steps[3:6]:
-        formatted += f"• {step}\n"
-
-    formatted += """
-
----
-
-### 3️⃣ Hospital Activation Protocol
-"""
-
-    for step in steps[6:8]:
-        formatted += f"• {step}\n"
-
-    formatted += """
-
----
-
-### ⚠ Safety & Compliance Checklist
-• Follow hospital SOP  
-• Senior physician supervision  
-• Document all actions  
-• Maintain triage  
-
----
-
-🔒 Protocol derived from hospital-approved medical literature.
-"""
-    return formatted
-
-
-def clinical_reasoning(query, pubmed_ids, trials, alerts):
-    return f"""
-## 🔬 Clinical Research Summary
-
-### Research Question
-{query}
-
-### Evidence Overview
-• {len(pubmed_ids)} PubMed indexed studies  
-• {len(trials)} Clinical trials reviewed  
-• {len(alerts)} FDA safety signals monitored  
-
-### Clinical Interpretation
-Current global research supports this therapy approach based on multiple trials.
-
-### Safety & Monitoring
-FDA surveillance data is continuously monitored.
-
-### Conclusion
-Final treatment decisions must be made by licensed specialists.
-"""
-
+    return protocol_md
 # ============================================================
 # SIDEBAR
 # ============================================================
@@ -516,3 +506,4 @@ if module == "🕒 Audit & Compliance":
 # FOOTER
 # ============================================================
 st.caption("ĀROGYABODHA AI — Phase-3 PRODUCTION Medical Intelligence OS")
+
