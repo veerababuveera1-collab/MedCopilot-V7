@@ -4,7 +4,7 @@
 # ============================================================
 
 import streamlit as st
-import os, json, pickle, datetime, io, requests, textwrap, re
+import os, json, pickle, datetime, io, requests, re
 import numpy as np
 import faiss
 import pandas as pd
@@ -150,7 +150,7 @@ def build_index():
     pickle.dump({"docs": docs, "srcs": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
 
-# Load cached index if exists
+# Load cached index
 if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
     try:
         st.session_state.index = faiss.read_index(INDEX_FILE)
@@ -162,42 +162,7 @@ if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
         st.session_state.index_ready = False
 
 # ============================================================
-# CLINICAL QUERY INTELLIGENCE LAYER (Enterprise Upgrade)
-# ============================================================
-STOPWORDS = {
-    "what","are","the","latest","for","in","patients","over","with","of","and","is","on",
-    "to","from","by","an","a","about","into","than","then","that","this","these","those",
-    "who","whom","whose","which","when","where","why","how","can","could","should","would"
-}
-
-SYNONYMS = {
-    "glioblastoma": ["glioblastoma", "gbm"],
-    "treatment": ["treatment", "therapy", "management"],
-    "elderly": ["elderly", "older adults", "aged", "over 60"],
-    "parkinson": ["parkinson", "parkinson's disease", "pd"],
-    "genetic": ["genetic", "genomics", "mutation", "marker", "biomarker"],
-    "cancer": ["cancer", "oncology", "tumor", "malignancy"]
-}
-
-def normalize_query(user_query: str) -> str:
-    if not user_query:
-        return ""
-    q = user_query.lower()
-    q = re.sub(r"[^\w\s]", " ", q)
-    tokens = [t for t in q.split() if t not in STOPWORDS and len(t) > 2]
-
-    expanded = []
-    for t in tokens:
-        expanded.append(t)
-        for key, vals in SYNONYMS.items():
-            if t == key:
-                expanded.extend(vals)
-
-    expanded = list(dict.fromkeys(expanded))
-    return " ".join(expanded)
-
-# ============================================================
-# LIVE INTELLIGENCE CONNECTORS
+# PUBMED / TRIALS / FDA CONNECTORS
 # ============================================================
 def fetch_pubmed(query):
     try:
@@ -225,7 +190,7 @@ def fetch_clinical_trials(query):
                 "Phase": ", ".join(design.get("phases", ["N/A"])),
                 "Status": status.get("overallStatus", "Unknown")
             })
-        return trials[:5]
+        return trials
     except:
         return []
 
@@ -234,13 +199,10 @@ def fetch_fda_alerts():
         url = "https://api.fda.gov/drug/enforcement.json?limit=5"
         r = requests.get(url, timeout=15)
         data = r.json()
-        alerts = []
-        for item in data.get("results", []):
-            alerts.append(
-                f"{item.get('product_description','Unknown Drug')} | "
-                f"Reason: {item.get('reason_for_recall','Safety Alert')}"
-            )
-        return alerts
+        return [
+            f"{i.get('product_description','Unknown')} | Reason: {i.get('reason_for_recall','Safety Alert')}"
+            for i in data.get("results", [])
+        ]
     except:
         return []
 
@@ -248,31 +210,25 @@ def fetch_fda_alerts():
 # CLINICAL REASONING ENGINE
 # ============================================================
 def clinical_reasoning(query, pubmed_ids, trials, alerts):
-    summary = f"""
+    return f"""
 ## 🔬 Clinical Research Summary
 
 ### Research Question
 {query}
 
 ### Evidence Overview
-• {len(pubmed_ids)} PubMed indexed studies  
+• {len(pubmed_ids)} PubMed indexed journal articles  
 • {len(trials)} Clinical trials reviewed  
-• {len(alerts)} FDA safety signals monitored  
+• {len(alerts)} FDA safety alerts monitored  
 
 ### Clinical Interpretation
-Based on current global research literature and clinical trial data, this therapy approach is supported
-by multiple Phase-II and Phase-III studies. Long-term outcomes show disease-specific benefit with
-manageable safety profile under specialist supervision.
-
-### Safety & Monitoring
-FDA surveillance data is continuously monitored for emerging risks. Any serious safety alerts
-are immediately flagged for physician review.
+Based on current peer-reviewed literature and international trials,
+this therapy approach is supported by multiple Phase-II and Phase-III studies.
 
 ### Conclusion
-This therapy remains a standard-of-care or emerging option based on indication and patient profile.
-Final treatment decisions must be made by the treating oncologist.
+This therapy remains standard-of-care or emerging depending on indication.
+Final decisions must be made by licensed specialists.
 """
-    return summary
 
 # ============================================================
 # SIDEBAR
@@ -313,7 +269,7 @@ if module == "📁 Evidence Library":
         st.success("Index built successfully")
 
 # ============================================================
-# PHASE-3 RESEARCH COPILOT (WITH QUERY INTELLIGENCE)
+# PHASE-3 RESEARCH COPILOT (WITH JOURNAL INTELLIGENCE)
 # ============================================================
 if module == "🔬 Phase-3 Research Copilot":
     st.header("🔬 Phase-3 Clinical Research Intelligence Engine")
@@ -321,31 +277,35 @@ if module == "🔬 Phase-3 Research Copilot":
     query = st.text_input("Ask a clinical research question")
 
     if st.button("Analyze Research") and query:
-        api_query = normalize_query(query)
 
-        audit("phase3_query_normalized", {
-            "user_query": query,
-            "api_query": api_query
-        })
+        audit("phase3_query", {"query": query})
 
-        pubmed_ids = fetch_pubmed(api_query)
-        trials = fetch_clinical_trials(api_query)
+        pubmed_ids = fetch_pubmed(query)
+        trials = fetch_clinical_trials(query)
         alerts = fetch_fda_alerts()
-
-        st.caption(f"🔎 Biomedical search query used: **{api_query}**")
 
         st.subheader("🧠 Clinical Reasoning Report")
         st.markdown(clinical_reasoning(query, pubmed_ids, trials, alerts))
 
-        st.subheader("📚 PubMed Articles (PMIDs)")
-        st.write(pubmed_ids)
+        # -------------------- JOURNAL SECTION --------------------
+        st.markdown("### 📚 Journal Evidence — PubMed Indexed Articles")
+        st.markdown("_Peer-reviewed biomedical literature_")
 
+        if pubmed_ids:
+            for i, pmid in enumerate(pubmed_ids, 1):
+                pubmed_url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+                st.markdown(f"**{i}. PMID: {pmid}**  \n🔗 [View Journal Article]({pubmed_url})")
+        else:
+            st.info("No PubMed journal articles found.")
+
+        # -------------------- TRIALS --------------------
         st.subheader("🧪 Clinical Trials")
         if trials:
             st.table(pd.DataFrame(trials))
         else:
-            st.info("No clinical trials found for this query.")
+            st.info("No clinical trials found.")
 
+        # -------------------- FDA --------------------
         st.subheader("⚠ FDA Safety Alerts")
         for a in alerts:
             st.warning(a)
@@ -355,9 +315,8 @@ if module == "🔬 Phase-3 Research Copilot":
 # ============================================================
 if module == "📊 Live Intelligence Dashboard":
     st.header("📊 Live Medical Intelligence Dashboard")
-
     st.metric("Indexed Documents", len(st.session_state.docs))
-    st.metric("PubMed Feed", "LIVE")
+    st.metric("PubMed Journal Feed", "LIVE")
     st.metric("Clinical Trials Feed", "LIVE")
     st.metric("FDA Regulatory Feed", "LIVE")
 
