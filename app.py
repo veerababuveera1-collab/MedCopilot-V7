@@ -4,7 +4,7 @@
 # ============================================================
 
 import streamlit as st
-import os, json, pickle, datetime, io, requests, textwrap
+import os, json, pickle, datetime, io, requests, textwrap, re
 import numpy as np
 import faiss
 import pandas as pd
@@ -75,7 +75,7 @@ def audit(event, meta=None):
     if os.path.exists(AUDIT_LOG):
         logs = json.load(open(AUDIT_LOG))
     logs.append({
-        "time": str(datetime.datetime.now()),
+        "time": str(datetime.datetime.utcnow()),
         "user": st.session_state.username,
         "role": st.session_state.role,
         "event": event,
@@ -118,7 +118,7 @@ def load_embedder():
 embedder = load_embedder()
 
 # ============================================================
-# PDF INDEXING
+# PDF INDEXING (Hospital Evidence RAG)
 # ============================================================
 def extract_text(file_bytes):
     reader = PdfReader(io.BytesIO(file_bytes))
@@ -132,7 +132,7 @@ def extract_text(file_bytes):
 def build_index():
     docs, srcs = [], []
     for pdf in os.listdir(PDF_FOLDER):
-        if pdf.endswith(".pdf"):
+        if pdf.lower().endswith(".pdf"):
             with open(os.path.join(PDF_FOLDER, pdf), "rb") as f:
                 pages = extract_text(f.read())
             for i, p in enumerate(pages):
@@ -150,6 +150,7 @@ def build_index():
     pickle.dump({"docs": docs, "srcs": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
 
+# Load cached index if exists
 if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
     try:
         st.session_state.index = faiss.read_index(INDEX_FILE)
@@ -161,13 +162,48 @@ if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
         st.session_state.index_ready = False
 
 # ============================================================
+# CLINICAL QUERY INTELLIGENCE LAYER (Enterprise Upgrade)
+# ============================================================
+STOPWORDS = {
+    "what","are","the","latest","for","in","patients","over","with","of","and","is","on",
+    "to","from","by","an","a","about","into","than","then","that","this","these","those",
+    "who","whom","whose","which","when","where","why","how","can","could","should","would"
+}
+
+SYNONYMS = {
+    "glioblastoma": ["glioblastoma", "gbm"],
+    "treatment": ["treatment", "therapy", "management"],
+    "elderly": ["elderly", "older adults", "aged", "over 60"],
+    "parkinson": ["parkinson", "parkinson's disease", "pd"],
+    "genetic": ["genetic", "genomics", "mutation", "marker", "biomarker"],
+    "cancer": ["cancer", "oncology", "tumor", "malignancy"]
+}
+
+def normalize_query(user_query: str) -> str:
+    if not user_query:
+        return ""
+    q = user_query.lower()
+    q = re.sub(r"[^\w\s]", " ", q)
+    tokens = [t for t in q.split() if t not in STOPWORDS and len(t) > 2]
+
+    expanded = []
+    for t in tokens:
+        expanded.append(t)
+        for key, vals in SYNONYMS.items():
+            if t == key:
+                expanded.extend(vals)
+
+    expanded = list(dict.fromkeys(expanded))
+    return " ".join(expanded)
+
+# ============================================================
 # LIVE INTELLIGENCE CONNECTORS
 # ============================================================
 def fetch_pubmed(query):
     try:
         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
         params = {"db": "pubmed", "term": query, "retmode": "json", "retmax": 5}
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params, timeout=15)
         return r.json()["esearchresult"]["idlist"]
     except:
         return []
@@ -176,7 +212,7 @@ def fetch_clinical_trials(query):
     try:
         url = "https://clinicaltrials.gov/api/v2/studies"
         params = {"query.term": query, "pageSize": 5}
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params, timeout=15)
         data = r.json()
         trials = []
         for study in data.get("studies", []):
@@ -196,7 +232,7 @@ def fetch_clinical_trials(query):
 def fetch_fda_alerts():
     try:
         url = "https://api.fda.gov/drug/enforcement.json?limit=5"
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=15)
         data = r.json()
         alerts = []
         for item in data.get("results", []):
@@ -209,7 +245,7 @@ def fetch_fda_alerts():
         return []
 
 # ============================================================
-# CLINICAL REASONING ENGINE (NEW)
+# CLINICAL REASONING ENGINE
 # ============================================================
 def clinical_reasoning(query, pubmed_ids, trials, alerts):
     summary = f"""
@@ -235,9 +271,7 @@ are immediately flagged for physician review.
 ### Conclusion
 This therapy remains a standard-of-care or emerging option based on indication and patient profile.
 Final treatment decisions must be made by the treating oncologist.
-
 """
-
     return summary
 
 # ============================================================
@@ -279,7 +313,7 @@ if module == "📁 Evidence Library":
         st.success("Index built successfully")
 
 # ============================================================
-# PHASE-3 RESEARCH COPILOT (WITH REASONING)
+# PHASE-3 RESEARCH COPILOT (WITH QUERY INTELLIGENCE)
 # ============================================================
 if module == "🔬 Phase-3 Research Copilot":
     st.header("🔬 Phase-3 Clinical Research Intelligence Engine")
@@ -287,20 +321,30 @@ if module == "🔬 Phase-3 Research Copilot":
     query = st.text_input("Ask a clinical research question")
 
     if st.button("Analyze Research") and query:
-        audit("phase3_query", {"query": query})
+        api_query = normalize_query(query)
 
-        pubmed_ids = fetch_pubmed(query)
-        trials = fetch_clinical_trials(query)
+        audit("phase3_query_normalized", {
+            "user_query": query,
+            "api_query": api_query
+        })
+
+        pubmed_ids = fetch_pubmed(api_query)
+        trials = fetch_clinical_trials(api_query)
         alerts = fetch_fda_alerts()
+
+        st.caption(f"🔎 Biomedical search query used: **{api_query}**")
 
         st.subheader("🧠 Clinical Reasoning Report")
         st.markdown(clinical_reasoning(query, pubmed_ids, trials, alerts))
 
-        st.subheader("📚 PubMed Articles")
+        st.subheader("📚 PubMed Articles (PMIDs)")
         st.write(pubmed_ids)
 
         st.subheader("🧪 Clinical Trials")
-        st.table(pd.DataFrame(trials))
+        if trials:
+            st.table(pd.DataFrame(trials))
+        else:
+            st.info("No clinical trials found for this query.")
 
         st.subheader("⚠ FDA Safety Alerts")
         for a in alerts:
@@ -340,7 +384,7 @@ if module == "👤 Patient Workspace":
             "gender": gender,
             "symptoms": symptoms,
             "timeline": [],
-            "time": str(datetime.datetime.now())
+            "time": str(datetime.datetime.utcnow())
         }
         patients.append(case)
         json.dump(patients, open(PATIENT_DB, "w"), indent=2)
@@ -365,7 +409,7 @@ if module == "🧾 Doctor Orders":
             for p in patients:
                 if p["id"] == pid:
                     p["timeline"].append({
-                        "time": str(datetime.datetime.now()),
+                        "time": str(datetime.datetime.utcnow()),
                         "doctor": st.session_state.username,
                         "order": order
                     })
@@ -374,13 +418,15 @@ if module == "🧾 Doctor Orders":
             st.success("Doctor order recorded")
 
 # ============================================================
-# AUDIT
+# AUDIT & COMPLIANCE
 # ============================================================
 if module == "🕒 Audit & Compliance":
     st.header("🕒 Audit & Compliance")
     if os.path.exists(AUDIT_LOG):
         df = pd.DataFrame(json.load(open(AUDIT_LOG)))
         st.dataframe(df, use_container_width=True)
+    else:
+        st.info("No audit events yet.")
 
 # ============================================================
 # FOOTER
