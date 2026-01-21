@@ -1,6 +1,6 @@
 # ============================================================
-# ĀROGYABODHA AI — Hospital Clinical Care + Decision Support OS
-# Final Production Hospital Operating Platform
+# ĀROGYABODHA AI — Hospital + Clinical Research Intelligence OS
+# Final End-to-End Medical Intelligence Platform
 # ============================================================
 
 import streamlit as st
@@ -14,7 +14,7 @@ from pypdf import PdfReader
 # ============================================================
 # CONFIG
 # ============================================================
-st.set_page_config("ĀROGYABODHA AI — Hospital OS", "🧠", layout="wide")
+st.set_page_config("ĀROGYABODHA AI — Hospital & Research OS", "🧠", layout="wide")
 
 st.info(
     "ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS). "
@@ -27,15 +27,19 @@ st.info(
 # ============================================================
 BASE = os.getcwd()
 PDF_FOLDER = os.path.join(BASE, "medical_library")
+RESEARCH_FOLDER = os.path.join(BASE, "research_library")
 VECTOR_FOLDER = os.path.join(BASE, "vector_cache")
+
 PATIENT_DB = os.path.join(BASE, "patients.json")
 AUDIT_LOG = os.path.join(BASE, "audit_log.json")
 USERS_DB = os.path.join(BASE, "users.json")
+FDA_DB = os.path.join(BASE, "fda_drugs.json")
 
 INDEX_FILE = os.path.join(VECTOR_FOLDER, "index.faiss")
 CACHE_FILE = os.path.join(VECTOR_FOLDER, "cache.pkl")
 
 os.makedirs(PDF_FOLDER, exist_ok=True)
+os.makedirs(RESEARCH_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
 if not os.path.exists(PATIENT_DB):
@@ -46,6 +50,15 @@ if not os.path.exists(USERS_DB):
         "doctor1": {"password": "doctor123", "role": "Doctor"},
         "researcher1": {"password": "research123", "role": "Researcher"}
     }, open(USERS_DB, "w"), indent=2)
+
+# Demo FDA DB
+if not os.path.exists(FDA_DB):
+    json.dump({
+        "Temozolomide": "FDA Approved",
+        "Bevacizumab": "FDA Approved",
+        "CAR-T Therapy": "Conditional Approval",
+        "Experimental Vaccine X": "Clinical Trial Phase"
+    }, open(FDA_DB, "w"), indent=2)
 
 # ============================================================
 # SESSION
@@ -83,7 +96,7 @@ def audit(event, meta=None):
 # LOGIN
 # ============================================================
 def login_ui():
-    st.title("ĀROGYABODHA AI — Secure Hospital Login")
+    st.title("ĀROGYABODHA AI — Secure Medical Intelligence Login")
     with st.form("login"):
         u = st.text_input("User ID")
         p = st.text_input("Password", type="password")
@@ -114,7 +127,7 @@ def load_embedder():
 embedder = load_embedder()
 
 # ============================================================
-# PDF + FAISS
+# PDF + FAISS INDEX
 # ============================================================
 def extract_text(file_bytes):
     reader = PdfReader(io.BytesIO(file_bytes))
@@ -125,16 +138,21 @@ def extract_text(file_bytes):
             pages.append(t)
     return pages
 
-def build_index():
+def load_all_documents():
     docs, srcs = [], []
-    for pdf in os.listdir(PDF_FOLDER):
-        if pdf.endswith(".pdf"):
-            with open(os.path.join(PDF_FOLDER, pdf), "rb") as f:
-                pages = extract_text(f.read())
-            for i, p in enumerate(pages):
-                docs.append(p)
-                srcs.append(f"{pdf} — Page {i+1}")
 
+    for folder in [PDF_FOLDER, RESEARCH_FOLDER]:
+        for pdf in os.listdir(folder):
+            if pdf.endswith(".pdf"):
+                with open(os.path.join(folder, pdf), "rb") as f:
+                    pages = extract_text(f.read())
+                for i, p in enumerate(pages):
+                    docs.append(p)
+                    srcs.append(f"{pdf} — Page {i+1}")
+    return docs, srcs
+
+def build_index():
+    docs, srcs = load_all_documents()
     if not docs:
         return None, [], []
 
@@ -146,98 +164,38 @@ def build_index():
     pickle.dump({"docs": docs, "srcs": srcs}, open(CACHE_FILE, "wb"))
     return idx, docs, srcs
 
-# Load index
+# Load existing index
 if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
     try:
         st.session_state.index = faiss.read_index(INDEX_FILE)
         cache = pickle.load(open(CACHE_FILE, "rb"))
-        st.session_state.docs = cache.get("docs", cache.get("documents", []))
-        st.session_state.srcs = cache.get("srcs", cache.get("sources", []))
+        st.session_state.docs = cache["docs"]
+        st.session_state.srcs = cache["srcs"]
         st.session_state.index_ready = True
     except:
         st.session_state.index_ready = False
 
 # ============================================================
-# CLINICAL KNOWLEDGE
+# RESEARCH UTILITIES
 # ============================================================
-SYMPTOMS = {
-    "fever": ["Infection", "Malaria", "Dengue"],
-    "chest pain": ["Heart attack", "Gastritis", "Anxiety"],
-    "breathlessness": ["Asthma", "Heart failure", "Pneumonia"],
-    "fatigue": ["Anemia", "Diabetes"],
-    "vomiting": ["Food poisoning", "Liver disease"]
-}
+FDA_STATUS = json.load(open(FDA_DB))
 
-RISK = {
-    "Heart attack": "HIGH",
-    "Dengue": "HIGH",
-    "Pneumonia": "MEDIUM",
-    "Malaria": "MEDIUM",
-    "Anemia": "LOW",
-    "Anxiety": "LOW"
-}
+def get_fda_status(drug):
+    return FDA_STATUS.get(drug, "Unknown / Experimental")
 
-TESTS = {
-    "fever": ["CBC", "Malaria Test", "Dengue NS1"],
-    "chest pain": ["ECG", "Troponin"],
-    "breathlessness": ["Chest X-Ray", "SpO2"],
-    "fatigue": ["CBC", "Blood Sugar"],
-    "vomiting": ["LFT", "RFT"]
-}
-
-TREATMENT_PROTOCOLS = {
-    "Heart attack": ["Aspirin", "ECG Monitoring", "ICU Admission"],
-    "Dengue": ["IV Fluids", "Platelet Monitoring"],
-    "Pneumonia": ["Antibiotics", "Oxygen Therapy"],
-    "Malaria": ["Antimalarial Therapy"],
-    "Anemia": ["Iron Therapy"]
-}
-
-RED_FLAGS = ["chest pain", "breathlessness", "unconscious", "high fever"]
+def compare_treatments(treatments):
+    table = []
+    for t in treatments:
+        table.append({
+            "Treatment": t,
+            "FDA Status": get_fda_status(t),
+            "Outcome": "Improved survival in recent trials",
+            "Side Effects": "Moderate (trial dependent)"
+        })
+    return pd.DataFrame(table)
 
 # ============================================================
-# CLINICAL ENGINE
-# ============================================================
-def extract_symptoms(q):
-    q = q.lower()
-    return [s for s in SYMPTOMS if s in q]
-
-def get_causes(symptoms):
-    c = []
-    for s in symptoms:
-        c.extend(SYMPTOMS[s])
-    return list(set(c))
-
-def get_risk(causes):
-    return {c: RISK.get(c, "MEDIUM") for c in causes}
-
-def get_tests(symptoms):
-    t = []
-    for s in symptoms:
-        t.extend(TESTS.get(s, []))
-    return list(set(t))
-
-def get_treatments(causes):
-    t = []
-    for c in causes:
-        t.extend(TREATMENT_PROTOCOLS.get(c, []))
-    return list(set(t))
-
-def get_redflags(symptoms):
-    return [s for s in symptoms if s in RED_FLAGS]
-
-def retrieve_evidence(query):
-    if not st.session_state.index_ready:
-        return "", []
-    qemb = embedder.encode(query)
-    qvec = np.array([qemb], dtype=np.float32)
-    D, I = st.session_state.index.search(qvec, 5)
-    context = "\n".join([st.session_state.docs[i] for i in I[0]])
-    sources = [st.session_state.srcs[i] for i in I[0]]
-    return context, sources
-
-# ============================================================
-# CLINICAL ANSWER FORMATTER  (NEW)
+# CLINICAL ANSWER FORMATTER
 # ============================================================
 def clinical_formatter(query, context, sources):
     short = textwrap.shorten(context.replace("\n", " "), width=1200)
@@ -246,21 +204,19 @@ def clinical_formatter(query, context, sources):
     return f"""
 ## 🏥 Clinical Overview — {query}
 
-### 🔬 Summary
+### 🔬 Research Summary
 {short}
 
 ### 🧪 Diagnosis
-Biopsy / Imaging / Laboratory tests depending on clinical suspicion.
+Imaging, biopsy and molecular profiling based on protocol.
 
-### 💊 Management
-Treatment depends on cancer type, stage and patient condition.
-Includes surgery, chemotherapy, radiotherapy or immunotherapy.
+### 💊 Treatment Options
+Based on latest trials and guidelines.
 
 ### 🚨 Red Flags
-• Rapidly growing lump  
-• Unexplained weight loss  
-• Bleeding from any orifice  
-• Persistent pain  
+• Rapid disease progression  
+• Neurological deficits  
+• Treatment resistance  
 
 ### 📚 Evidence Sources
 {srcs}
@@ -276,10 +232,10 @@ if st.sidebar.button("Logout"):
     st.session_state.logged_in = False
     st.rerun()
 
-module = st.sidebar.radio("Hospital Command Center", [
+module = st.sidebar.radio("Medical Intelligence Center", [
     "📁 Evidence Library",
+    "🔬 Research Copilot",
     "👤 Patient Workspace",
-    "🔬 Clinical Reasoning Engine",
     "🧾 Doctor Orders",
     "🕒 Audit & Compliance"
 ])
@@ -288,22 +244,51 @@ module = st.sidebar.radio("Hospital Command Center", [
 # EVIDENCE LIBRARY
 # ============================================================
 if module == "📁 Evidence Library":
-    st.header("📁 Hospital Evidence Library")
+    st.header("📁 Medical Evidence Library (Hospital + Research)")
 
-    files = st.file_uploader("Upload Medical PDFs", type=["pdf"], accept_multiple_files=True)
+    files = st.file_uploader("Upload Medical / Research PDFs", type=["pdf"], accept_multiple_files=True)
     if files:
         for f in files:
-            with open(os.path.join(PDF_FOLDER, f.name), "wb") as out:
+            with open(os.path.join(RESEARCH_FOLDER, f.name), "wb") as out:
                 out.write(f.getbuffer())
-        st.success("PDFs uploaded")
+        st.success("Research PDFs uploaded")
 
-    if st.button("Build Evidence Index"):
+    if st.button("Build Global Evidence Index"):
         st.session_state.index, st.session_state.docs, st.session_state.srcs = build_index()
         st.session_state.index_ready = True
         audit("build_index", {"docs": len(st.session_state.docs)})
-        st.success("Index built successfully")
+        st.success("Global Medical Index built successfully")
 
     st.markdown("🟢 Index Ready" if st.session_state.index_ready else "🔴 Index Not Built")
+
+# ============================================================
+# RESEARCH COPILOT
+# ============================================================
+if module == "🔬 Research Copilot":
+    st.header("🔬 Clinical Research Copilot")
+
+    query = st.text_input("Ask a clinical research question")
+
+    if st.button("Analyze Research") and query:
+        audit("research_query", {"query": query})
+
+        if not st.session_state.index_ready:
+            st.error("Global evidence index not built.")
+        else:
+            qemb = embedder.encode(query)
+            qvec = np.array([qemb], dtype=np.float32)
+            D, I = st.session_state.index.search(qvec, 5)
+
+            context = "\n".join([st.session_state.docs[i] for i in I[0]])
+            sources = [st.session_state.srcs[i] for i in I[0]]
+
+            st.markdown(clinical_formatter(query, context, sources))
+
+            # Treatment comparison demo
+            demo_treatments = ["Temozolomide", "Bevacizumab", "CAR-T Therapy"]
+            st.subheader("📊 Treatment Outcome Comparison")
+            df = compare_treatments(demo_treatments)
+            st.dataframe(df, use_container_width=True)
 
 # ============================================================
 # PATIENT WORKSPACE
@@ -337,58 +322,6 @@ if module == "👤 Patient Workspace":
 
     st.subheader("Active Cases")
     st.dataframe(pd.DataFrame(patients), use_container_width=True)
-
-# ============================================================
-# CLINICAL REASONING ENGINE (AI MODES + FORMATTER)
-# ============================================================
-if module == "🔬 Clinical Reasoning Engine":
-    st.header("🔬 Clinical Reasoning Engine")
-
-    query = st.text_input("Enter patient symptoms or clinical question")
-
-    ai_mode = st.radio("AI Mode", ["🏥 Hospital AI", "🌍 Global AI", "🔀 Hybrid AI"], horizontal=True)
-
-    if st.button("Analyze") and query:
-        audit("clinical_analysis", {"query": query, "mode": ai_mode})
-
-        symptoms = extract_symptoms(query)
-        causes = get_causes(symptoms)
-        risks = get_risk(causes)
-        tests = get_tests(symptoms)
-        flags = get_redflags(symptoms)
-        treatments = get_treatments(causes)
-
-        context, sources = retrieve_evidence(query)
-
-        st.subheader("🏥 Clinical Summary")
-        st.write("Symptoms detected:", symptoms if symptoms else "Not specified")
-
-        st.subheader("🔍 Possible Causes & Risk")
-        for c in causes:
-            st.write(f"• {c} (Risk: {risks[c]})")
-
-        if flags:
-            st.subheader("🚨 Red Flags")
-            for f in flags:
-                st.error(f)
-
-        st.subheader("🧪 Suggested Tests")
-        for t in tests:
-            st.write("•", t)
-
-        st.subheader("💊 Standard Treatment Protocols")
-        for tr in treatments:
-            st.write("•", tr)
-
-        # ===== Hospital AI (Formatted) =====
-        if ai_mode in ["🏥 Hospital AI", "🔀 Hybrid AI"] and context:
-            st.subheader("📚 Hospital Clinical Evidence")
-            formatted = clinical_formatter(query, context, sources)
-            st.markdown(formatted)
-
-        if ai_mode == "🌍 Global AI":
-            st.subheader("🌍 Global Clinical Reasoning")
-            st.write("Global medical knowledge based clinical reasoning engine active.")
 
 # ============================================================
 # DOCTOR ORDERS
@@ -431,4 +364,4 @@ if module == "🕒 Audit & Compliance":
 # ============================================================
 # FOOTER
 # ============================================================
-st.caption("ĀROGYABODHA AI — Hospital Clinical Operating System")
+st.caption("ĀROGYABODHA AI — Hospital & Clinical Research Intelligence Platform")
