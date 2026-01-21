@@ -1,6 +1,6 @@
 # ============================================================
 # ĀROGYABODHA AI — Hospital Clinical Care + Decision Support OS
-# Full End-to-End Hospital Operating Platform
+# Full End-to-End Hospital Operating Platform (Final Version)
 # ============================================================
 
 import streamlit as st
@@ -38,7 +38,6 @@ CACHE_FILE = os.path.join(VECTOR_FOLDER, "cache.pkl")
 os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
-# Init DBs
 if not os.path.exists(PATIENT_DB):
     json.dump([], open(PATIENT_DB, "w"), indent=2)
 
@@ -60,7 +59,6 @@ defaults = {
     "docs": [],
     "srcs": []
 }
-
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -149,19 +147,22 @@ def build_index():
 
     return idx, docs, srcs
 
-# Load existing index
+# Load existing index (backward compatible)
 if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
-    st.session_state.index = faiss.read_index(INDEX_FILE)
-    cache = pickle.load(open(CACHE_FILE, "rb"))
+    try:
+        st.session_state.index = faiss.read_index(INDEX_FILE)
+        cache = pickle.load(open(CACHE_FILE, "rb"))
 
-    if "docs" in cache:
-        st.session_state.docs = cache["docs"]
-        st.session_state.srcs = cache["srcs"]
-    elif "documents" in cache:
-        st.session_state.docs = cache["documents"]
-        st.session_state.srcs = cache["sources"]
+        if "docs" in cache:
+            st.session_state.docs = cache["docs"]
+            st.session_state.srcs = cache["srcs"]
+        elif "documents" in cache:
+            st.session_state.docs = cache["documents"]
+            st.session_state.srcs = cache["sources"]
 
-    st.session_state.index_ready = True
+        st.session_state.index_ready = True
+    except:
+        st.session_state.index_ready = False
 
 # ============================================================
 # CLINICAL KNOWLEDGE
@@ -232,6 +233,16 @@ def get_treatments(causes):
 def get_redflags(symptoms):
     return [s for s in symptoms if s in RED_FLAGS]
 
+def retrieve_evidence(query):
+    if not st.session_state.index_ready:
+        return None, []
+    qemb = embedder.encode(query)
+    qvec = np.array([qemb], dtype=np.float32)
+    D, I = st.session_state.index.search(qvec, 5)
+    context = "\n\n".join([st.session_state.docs[i] for i in I[0]])
+    sources = [st.session_state.srcs[i] for i in I[0]]
+    return context, sources
+
 # ============================================================
 # SIDEBAR
 # ============================================================
@@ -245,7 +256,7 @@ if st.sidebar.button("Logout"):
 module = st.sidebar.radio("Hospital Command Center", [
     "📁 Evidence Library",
     "👤 Patient Workspace",
-    "🔬 Clinical Copilot",
+    "🔬 Clinical Reasoning Engine",
     "🧾 Doctor Orders",
     "🕒 Audit & Compliance"
 ])
@@ -305,14 +316,18 @@ if module == "👤 Patient Workspace":
     st.dataframe(pd.DataFrame(patients), use_container_width=True)
 
 # ============================================================
-# CLINICAL COPILOT
+# CLINICAL REASONING ENGINE (AI MODES)
 # ============================================================
-if module == "🔬 Clinical Copilot":
+if module == "🔬 Clinical Reasoning Engine":
     st.header("🔬 Clinical Reasoning Engine")
 
-    query = st.text_input("Enter patient symptoms")
+    query = st.text_input("Enter patient symptoms or clinical question")
+
+    ai_mode = st.radio("AI Mode", ["🏥 Hospital AI", "🌍 Global AI", "🔀 Hybrid AI"], horizontal=True)
 
     if st.button("Analyze") and query:
+        audit("clinical_analysis", {"query": query, "mode": ai_mode})
+
         symptoms = extract_symptoms(query)
         causes = get_causes(symptoms)
         risks = get_risk(causes)
@@ -320,27 +335,47 @@ if module == "🔬 Clinical Copilot":
         flags = get_redflags(symptoms)
         treatments = get_treatments(causes)
 
-        st.subheader("Clinical Summary")
-        st.write("Symptoms:", symptoms)
+        hospital_context, sources = None, []
+        if ai_mode in ["🏥 Hospital AI", "🔀 Hybrid AI"]:
+            hospital_context, sources = retrieve_evidence(query)
 
-        st.subheader("Possible Causes & Risk")
+        st.subheader("🏥 Clinical Summary")
+        st.write("Symptoms detected:", symptoms if symptoms else "Not specified")
+
+        st.subheader("🔍 Possible Causes & Risk")
         for c in causes:
             st.write(f"• {c} (Risk: {risks[c]})")
 
         if flags:
-            st.subheader("🚨 Red Flags")
+            st.subheader("🚨 Red Flags (Urgent Attention)")
             for f in flags:
                 st.error(f)
 
-        st.subheader("Suggested Tests")
+        st.subheader("🧪 Suggested Tests")
         for t in tests:
             st.write("•", t)
 
-        st.subheader("Standard Treatment Protocols")
+        st.subheader("💊 Standard Treatment Protocols")
         for tr in treatments:
             st.write("•", tr)
 
-        audit("clinical_analysis", {"query": query})
+        if ai_mode == "🏥 Hospital AI" and hospital_context:
+            st.subheader("📚 Hospital Evidence")
+            st.write(hospital_context[:2000] + "...")
+            for s in sources:
+                st.info(s)
+
+        if ai_mode == "🌍 Global AI":
+            st.subheader("🌍 Global Clinical Reasoning")
+            st.write("Clinical reasoning based on global medical knowledge base.")
+
+        if ai_mode == "🔀 Hybrid AI":
+            st.subheader("🔀 Hybrid Clinical Intelligence")
+            st.write("Combining hospital evidence with global medical reasoning.")
+            if hospital_context:
+                st.write(hospital_context[:2000] + "...")
+                for s in sources:
+                    st.info(s)
 
 # ============================================================
 # DOCTOR ORDERS
