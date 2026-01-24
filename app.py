@@ -1,6 +1,5 @@
 # ============================================================
 # ĀROGYABODHA AI — Phase-3 PRODUCTION Medical Intelligence OS
-# Hospital + Research + Trial + Regulatory + Clinical Reasoning
 # ============================================================
 
 import streamlit as st
@@ -132,92 +131,83 @@ def extract_text(file_bytes):
             pages.append(t)
     return pages
 
-def build_index():
-    docs, srcs = [], []
-    for pdf in os.listdir(PDF_FOLDER):
-        if pdf.lower().endswith(".pdf"):
-            with open(os.path.join(PDF_FOLDER, pdf), "rb") as f:
-                pages = extract_text(f.read())
-            for i, p in enumerate(pages):
-                docs.append(p)
-                srcs.append(f"{pdf} — Page {i+1}")
-
-    if not docs:
-        return None, [], []
-
-    emb = embedder.encode(docs)
-    idx = faiss.IndexFlatL2(emb.shape[1])
-    idx.add(np.array(emb, dtype=np.float32))
-
-    faiss.write_index(idx, INDEX_FILE)
-    pickle.dump({"docs": docs, "srcs": srcs}, open(CACHE_FILE, "wb"))
-    return idx, docs, srcs
-
 def display_pdf(pdf_path, height=700):
     with open(pdf_path, "rb") as f:
         base64_pdf = base64.b64encode(f.read()).decode("utf-8")
 
-    pdf_iframe = f"""
-        <iframe src="data:application/pdf;base64,{base64_pdf}"
-                width="100%" height="{height}"
-                type="application/pdf"></iframe>
-    """
-    st.markdown(pdf_iframe, unsafe_allow_html=True)
+    st.markdown(
+        f"""<iframe src="data:application/pdf;base64,{base64_pdf}"
+        width="100%" height="{height}"></iframe>""",
+        unsafe_allow_html=True
+    )
 
 # ============================================================
-# EXTERNAL INTELLIGENCE
+# PUBMED CONNECTORS
 # ============================================================
 def fetch_pubmed(query):
     try:
         r = requests.get(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
-            params={"db": "pubmed", "term": query, "retmode": "json", "retmax": 5},
+            params={"db": "pubmed", "term": query, "retmode": "json", "retmax": 10},
             timeout=15
         )
         return r.json()["esearchresult"]["idlist"]
     except:
         return []
 
-def fetch_clinical_trials(query):
+def fetch_pubmed_details(pmids):
+    if not pmids:
+        return []
+
     try:
         r = requests.get(
-            "https://clinicaltrials.gov/api/v2/studies",
-            params={"query.term": query, "pageSize": 5},
-            timeout=15
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+            params={"db": "pubmed", "id": ",".join(pmids), "retmode": "xml"},
+            timeout=20
         )
-        trials = []
-        for s in r.json().get("studies", []):
-            proto = s.get("protocolSection", {})
-            ident = proto.get("identificationModule", {})
-            status = proto.get("statusModule", {})
-            design = proto.get("designModule", {})
-            trials.append({
-                "Trial ID": ident.get("nctId", "N/A"),
-                "Phase": ", ".join(design.get("phases", ["N/A"])),
-                "Status": status.get("overallStatus", "Unknown")
+
+        papers = []
+        for art in re.findall(r"<PubmedArticle>(.*?)</PubmedArticle>", r.text, re.S):
+            pmid = re.search(r"<PMID.*?>(.*?)</PMID>", art)
+            title = re.search(r"<ArticleTitle>(.*?)</ArticleTitle>", art, re.S)
+            abstract = re.search(r"<AbstractText.*?>(.*?)</AbstractText>", art, re.S)
+
+            papers.append({
+                "pmid": pmid.group(1) if pmid else "N/A",
+                "title": re.sub("<.*?>", "", title.group(1)) if title else "No title",
+                "abstract": re.sub("<.*?>", "", abstract.group(1))[:1200]
+                if abstract else "No abstract available",
+                "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid.group(1)}/"
+                if pmid else ""
             })
-        return trials
+        return papers
     except:
         return []
 
-def fetch_fda_alerts():
-    try:
-        r = requests.get(
-            "https://api.fda.gov/drug/enforcement.json?limit=5",
-            timeout=15
-        )
-        return [
-            f"{i.get('product_description','Unknown')} | "
-            f"{i.get('reason_for_recall','Safety Alert')}"
-            for i in r.json().get("results", [])
-        ]
-    except:
-        return []
+# ============================================================
+# UI HELPER — PAPERS FOUND (PUBMED STYLE)
+# ============================================================
+def display_pubmed_papers(pubmed_papers):
+    st.subheader("📚 Papers Found")
+
+    tab_pubmed, = st.tabs([f"PubMed ({len(pubmed_papers)})"])
+
+    with tab_pubmed:
+        if pubmed_papers:
+            for p in pubmed_papers:
+                with st.expander(f"📄 {p['title']}"):
+                    st.markdown(f"**PMID:** {p['pmid']}")
+                    st.markdown("**Abstract**")
+                    st.write(p["abstract"])
+                    st.link_button("🔗 View on PubMed", p["url"])
+        else:
+            st.info("No PubMed papers found.")
 
 # ============================================================
 # SIDEBAR
 # ============================================================
 st.sidebar.markdown(f"👨‍⚕️ **{st.session_state.username}** ({st.session_state.role})")
+
 if st.sidebar.button("Logout"):
     audit("logout")
     st.session_state.logged_in = False
@@ -228,7 +218,6 @@ module = st.sidebar.radio("Medical Intelligence Center", [
     "🔬 Phase-3 Research Copilot",
     "📊 Live Intelligence Dashboard",
     "👤 Patient Workspace",
-    "🧾 Doctor Orders",
     "🕒 Audit & Compliance"
 ])
 
@@ -245,22 +234,15 @@ if module == "📁 Evidence Library":
         for f in files:
             with open(os.path.join(PDF_FOLDER, f.name), "wb") as out:
                 out.write(f.read())
-        st.success("PDFs uploaded successfully")
+        st.success("PDFs uploaded")
 
-    if st.button("Build Evidence Index"):
-        st.session_state.index, st.session_state.docs, st.session_state.srcs = build_index()
-        audit("build_index", {"docs": len(st.session_state.docs)})
-        st.success("Evidence index built")
-
-    st.divider()
-    st.subheader("📄 View Uploaded PDFs")
-
-    pdf_files = [f for f in os.listdir(PDF_FOLDER) if f.lower().endswith(".pdf")]
-    if pdf_files:
-        selected_pdf = st.selectbox("Select a PDF", pdf_files)
-        display_pdf(os.path.join(PDF_FOLDER, selected_pdf))
+    st.subheader("📄 View PDFs")
+    pdfs = [f for f in os.listdir(PDF_FOLDER) if f.lower().endswith(".pdf")]
+    if pdfs:
+        selected = st.selectbox("Select PDF", pdfs)
+        display_pdf(os.path.join(PDF_FOLDER, selected))
     else:
-        st.info("No PDFs available")
+        st.info("No PDFs uploaded")
 
 # ---------- Phase-3 Research Copilot ----------
 if module == "🔬 Phase-3 Research Copilot":
@@ -268,41 +250,21 @@ if module == "🔬 Phase-3 Research Copilot":
 
     query = st.text_input(
         "Ask a clinical research question",
-        placeholder="e.g., Pathological methods for diagnosing leukemia"
+        placeholder="e.g., pathological methods for diagnosing leukemia"
     )
 
     if st.button("Analyze Research") and query:
         audit("phase3_query", {"query": query})
 
         pubmed_ids = fetch_pubmed(query)
-        trials = fetch_clinical_trials(query)
-        alerts = fetch_fda_alerts()
+        pubmed_papers = fetch_pubmed_details(pubmed_ids)
 
-        st.subheader("📚 PubMed Journal Evidence")
-        if pubmed_ids:
-            for pmid in pubmed_ids:
-                st.markdown(f"- PMID: **{pmid}**  "
-                            f"[View](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)")
-        else:
-            st.info("No PubMed articles found")
-
-        st.subheader("🧪 Clinical Trials")
-        if trials:
-            st.table(pd.DataFrame(trials))
-        else:
-            st.info("No clinical trials found")
-
-        st.subheader("⚠ FDA Safety Alerts")
-        if alerts:
-            for a in alerts:
-                st.warning(a)
-        else:
-            st.info("No FDA safety alerts")
+        display_pubmed_papers(pubmed_papers)
 
         st.subheader("📄 Local Hospital Evidence (PDF)")
-        pdf_files = [f for f in os.listdir(PDF_FOLDER) if f.lower().endswith(".pdf")]
-        if pdf_files:
-            selected_pdf = st.selectbox("Select Evidence PDF", pdf_files, key="phase3_pdf")
+        pdfs = [f for f in os.listdir(PDF_FOLDER) if f.lower().endswith(".pdf")]
+        if pdfs:
+            selected_pdf = st.selectbox("Select evidence PDF", pdfs)
             display_pdf(os.path.join(PDF_FOLDER, selected_pdf))
         else:
             st.info("No local PDFs available")
@@ -310,45 +272,12 @@ if module == "🔬 Phase-3 Research Copilot":
 # ---------- Live Dashboard ----------
 if module == "📊 Live Intelligence Dashboard":
     st.header("📊 Live Medical Intelligence Dashboard")
-    st.metric("Indexed Evidence Pages", len(st.session_state.docs))
-    st.metric("PubMed Feed", "LIVE")
-    st.metric("Clinical Trials Feed", "LIVE")
-    st.metric("FDA Regulatory Feed", "LIVE")
+    st.metric("Indexed PDFs", len(os.listdir(PDF_FOLDER)))
 
 # ---------- Patient Workspace ----------
 if module == "👤 Patient Workspace":
     st.header("👤 Patient Workspace")
-
-    patients = json.load(open(PATIENT_DB))
-    with st.form("add_patient"):
-        name = st.text_input("Patient Name")
-        age = st.number_input("Age", 0, 120)
-        gender = st.selectbox("Gender", ["Male", "Female", "Other"])
-        symptoms = st.text_area("Symptoms")
-        submit = st.form_submit_button("Create Patient Case")
-
-    if submit:
-        patients.append({
-            "id": len(patients) + 1,
-            "name": name,
-            "age": age,
-            "gender": gender,
-            "symptoms": symptoms,
-            "created": str(datetime.datetime.utcnow())
-        })
-        json.dump(patients, open(PATIENT_DB, "w"), indent=2)
-        audit("new_patient", {"name": name})
-        st.success("Patient case created")
-
-    if patients:
-        st.dataframe(pd.DataFrame(patients), use_container_width=True)
-    else:
-        st.info("No patient cases available")
-
-# ---------- Doctor Orders ----------
-if module == "🧾 Doctor Orders":
-    st.header("🧾 Doctor Orders")
-    st.info("Doctor order module ready")
+    st.info("Patient module ready")
 
 # ---------- Audit ----------
 if module == "🕒 Audit & Compliance":
@@ -356,7 +285,7 @@ if module == "🕒 Audit & Compliance":
     if os.path.exists(AUDIT_LOG):
         st.dataframe(pd.DataFrame(json.load(open(AUDIT_LOG))), use_container_width=True)
     else:
-        st.info("No audit records found")
+        st.info("No audit records")
 
 # ============================================================
 # FOOTER
