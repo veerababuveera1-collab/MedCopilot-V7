@@ -172,6 +172,55 @@ def fetch_pubmed(query):
         return r.json()["esearchresult"]["idlist"]
     except:
         return []
+def fetch_pubmed_details(pmids):
+    """
+    Fetch detailed PubMed metadata using efetch
+    """
+    if not pmids:
+        return []
+
+    try:
+        url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+        params = {
+            "db": "pubmed",
+            "id": ",".join(pmids),
+            "retmode": "xml"
+        }
+
+        r = requests.get(url, params=params, timeout=20)
+        xml = r.text
+
+        papers = []
+        articles = re.findall(r"<PubmedArticle>(.*?)</PubmedArticle>", xml, re.S)
+
+        for art in articles:
+            pmid = re.search(r"<PMID.*?>(.*?)</PMID>", art)
+            title = re.search(r"<ArticleTitle>(.*?)</ArticleTitle>", art, re.S)
+            abstract = re.search(r"<AbstractText.*?>(.*?)</AbstractText>", art, re.S)
+            journal = re.search(r"<Title>(.*?)</Title>", art)
+            year = re.search(r"<Year>(\d{4})</Year>", art)
+
+            authors = re.findall(
+                r"<LastName>(.*?)</LastName>.*?<ForeName>(.*?)</ForeName>",
+                art, re.S
+            )
+            author_list = [f"{f} {l}" for l, f in authors[:6]]
+
+            papers.append({
+                "PMID": pmid.group(1) if pmid else "N/A",
+                "Title": re.sub("<.*?>", "", title.group(1)) if title else "No title",
+                "Authors": ", ".join(author_list) if author_list else "N/A",
+                "Journal": journal.group(1) if journal else "N/A",
+                "Year": year.group(1) if year else "N/A",
+                "Abstract": re.sub("<.*?>", "", abstract.group(1))[:1200]
+                            if abstract else "No abstract available"
+            })
+
+        return papers
+
+    except Exception:
+        return []
+
 
 def fetch_clinical_trials(query):
     try:
@@ -295,9 +344,10 @@ if module == "📁 Evidence Library":
 # PHASE-3 RESEARCH COPILOT (WITH JOURNAL INTELLIGENCE)
 # ============================================================
 if module == "🔬 Phase-3 Research Copilot":
+    pubmed_ids = fetch_pubmed(query)
+    pubmed_papers = fetch_pubmed_details(pubmed_ids)
     st.header("🧠 Clinical Research Intelligence Assistant")
     st.caption("Research-use only | Not for diagnosis or treatment")
-
     query = st.text_input("Ask a clinical research question")
 
     if st.button("Analyze Research") and query:
@@ -315,12 +365,21 @@ if module == "🔬 Phase-3 Research Copilot":
         st.markdown("### 📚 Journal Evidence — PubMed Indexed Articles")
         st.markdown("_Peer-reviewed biomedical literature_")
 
-        if pubmed_ids:
-            for i, pmid in enumerate(pubmed_ids, 1):
-                pubmed_url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-                st.markdown(f"**{i}. PMID: {pmid}**  \n🔗 [View Journal Article]({pubmed_url})")
-        else:
-            st.info("No PubMed journal articles found.")
+if pubmed_papers:
+    for i, p in enumerate(pubmed_papers, 1):
+        with st.expander(f"📄 {i}. {p['Title']}"):
+            st.markdown(f"**PMID:** {p['PMID']}")
+            st.markdown(f"**Authors:** {p['Authors']}")
+            st.markdown(f"**Journal:** {p['Journal']} ({p['Year']})")
+            st.markdown("**Abstract:**")
+            st.write(p["Abstract"])
+            st.link_button(
+                "🔗 View on PubMed",
+                f"https://pubmed.ncbi.nlm.nih.gov/{p['PMID']}/"
+            )
+else:
+    st.info("No PubMed indexed journal articles found.")
+
 
         # -------------------- TRIALS --------------------
         st.subheader("🧪 Clinical Trials")
@@ -415,5 +474,4 @@ if module == "🕒 Audit & Compliance":
 # FOOTER
 # ============================================================
 st.caption("ĀROGYABODHA AI — Phase-3 PRODUCTION Medical Intelligence OS")
-
 
