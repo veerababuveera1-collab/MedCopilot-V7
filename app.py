@@ -295,7 +295,8 @@ if module == "📁 Evidence Library":
 # PHASE-3 RESEARCH COPILOT (WITH JOURNAL INTELLIGENCE)
 # ============================================================
 if module == "🔬 Phase-3 Research Copilot":
-    st.header("🔬 Phase-3 Clinical Research Intelligence Engine")
+    st.header("🧠 Clinical Research Intelligence Assistant")
+    st.caption("Research-use only | Not for diagnosis or treatment")
 
     query = st.text_input("Ask a clinical research question")
 
@@ -414,4 +415,5 @@ if module == "🕒 Audit & Compliance":
 # FOOTER
 # ============================================================
 st.caption("ĀROGYABODHA AI — Phase-3 PRODUCTION Medical Intelligence OS")
+
 
