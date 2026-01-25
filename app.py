@@ -1,6 +1,6 @@
 # ============================================================
 # ĀROGYABODHA AI — Hybrid Medical Intelligence OS
-# Semantic AI + Clinical Reasoning CDSS (UPGRADED)
+# Semantic AI + Evidence-Based Clinical Reasoning CDSS
 # ============================================================
 
 import streamlit as st
@@ -12,7 +12,7 @@ from sentence_transformers import SentenceTransformer
 # ================= CONFIG =================
 
 st.set_page_config("ĀROGYABODHA AI", "🧠", layout="wide")
-st.info("ℹ️ Clinical Decision Support System — Research only")
+st.info("ℹ️ Clinical Decision Support System — Research only (Not for diagnosis or treatment)")
 
 BASE = os.getcwd()
 PDF_FOLDER = os.path.join(BASE, "medical_library")
@@ -50,6 +50,7 @@ def audit(event, meta=None):
 
 def login_ui():
     st.title("Secure Medical Login")
+
     with st.form("login"):
         u = st.text_input("User ID")
         p = st.text_input("Password", type="password")
@@ -126,43 +127,40 @@ model = load_model()
 def semantic_rank(query, papers, top_k=8):
     if not papers:
         return []
+
     texts = [p["abstract"] for p in papers] + [query]
     emb = model.encode(texts)
     scores = np.dot(emb[:-1], emb[-1])
     ranked = sorted(zip(papers, scores), key=lambda x: x[1], reverse=True)
+
     return [p for p, _ in ranked[:top_k]]
 
 # ================= UNIVERSAL MEDICAL INTELLIGENCE =================
 
 CONCEPT_GROUPS = {
-
     "Molecular & Genomics": {"pcr","sequencing","genomic","mutation","multi-omics"},
-    "Imaging & Radiology": {"ct","mri","ultrasound","echocardiography","x-ray"},
-    "Immunology & Infection": {"immune response","antibody","vaccine","viral","bacterial"},
+    "Immunology & Infection": {"vaccine","antibody","immune response","viral infection"},
     "Laboratory & Biomarkers": {"biomarker","troponin","crp","d-dimer","creatinine"},
-    "Clinical Outcomes & Risk": {"mortality","complication","hospitalization","survival"},
-    "Clinical Trials & Evidence": {"clinical trial","phase ii","phase iii","efficacy","safety"},
-    "Pharmacology & Therapeutics": {"drug interaction","toxicity","anticoagulant","therapy"},
+    "Imaging & Radiology": {"ct","mri","ultrasound","x-ray","pet scan"},
+    "Clinical Trials & Evidence": {"clinical trial","efficacy","safety","phase ii","phase iii"},
+    "Clinical Outcomes & Risk": {"mortality","survival","complication","hospitalization"},
+    "Pharmacology & Therapeutics": {"drug interaction","toxicity","dose","anticoagulant"},
     "AI & Predictive Medicine": {"artificial intelligence","machine learning","predictive model"}
 }
 
-# ================= HYBRID ANSWER ENGINE =================
-
-def generate_narrative_answer(query, papers):
-    if not papers:
-        return "Current published research is limited, and no strong conclusions can yet be drawn."
-
+def generate_clinical_answer(query):
+    topic = query.rstrip("?").lower()
     return f"""
 ### 📌 Clinical Research Answer
 
-Current biomedical research indicates that **{query.lower()}** is actively being investigated across laboratory studies and clinical trials. 
+Current biomedical research indicates that research into {topic} is actively progressing across laboratory studies and clinical trials.
 
-Recent studies focus on understanding immune mechanisms, evaluating molecular targets, monitoring safety and efficacy outcomes, and assessing real-world clinical effectiveness. 
+Recent investigations focus on understanding disease mechanisms, evaluating molecular targets, monitoring safety and efficacy outcomes, and assessing real-world clinical effectiveness.
 
-Overall, findings suggest **promising progress**, but large-scale trials and long-term outcome studies are still ongoing before definitive conclusions can be established.
+Overall, findings suggest promising advances, though large-scale trials and long-term outcome studies are still ongoing before definitive conclusions can be established.
 """
 
-def generate_concept_summary(papers):
+def generate_ai_themes(papers):
     combined = " ".join(p["abstract"].lower() for p in papers)
 
     lines = ["### 🧠 Evidence Themes Identified", ""]
@@ -174,15 +172,15 @@ def generate_concept_summary(papers):
             found = True
             lines.append(f"🧪 **{group}**")
             for h in sorted(set(hits)):
-                lines.append(f"- {h.upper()}-based clinical research")
+                lines.append(f"- {h.capitalize()}-based clinical research")
             lines.append("")
 
     if not found:
-        lines.append("No dominant clinical themes detected.")
+        lines.append("No dominant evidence themes identified.")
 
     return "\n".join(lines)
 
-# ================= PAPER UI =================
+# ================= UI =================
 
 def show_papers(papers):
     st.subheader("📚 Papers Found")
@@ -195,7 +193,7 @@ def show_papers(papers):
 
 st.sidebar.markdown(f"👨‍⚕️ {st.session_state.username}")
 module = st.sidebar.radio("Medical Intelligence Center", [
-    "📁 Evidence Library", "🔬 Research Copilot", "📊 Dashboard", "🕒 Audit"
+    "📁 Evidence Library","🔬 Research Copilot","📊 Dashboard","🕒 Audit"
 ])
 
 # ================= MODULES =================
@@ -229,8 +227,8 @@ if module == "🔬 Research Copilot":
         raw = fetch_pubmed_details(ids)
         papers = semantic_rank(query, raw)
 
-        st.markdown(generate_narrative_answer(query, papers))
-        st.markdown(generate_concept_summary(papers))
+        st.markdown(generate_clinical_answer(query))
+        st.markdown(generate_ai_themes(papers))
         show_papers(papers)
 
         st.subheader("Local Evidence PDFs")
