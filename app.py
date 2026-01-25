@@ -50,7 +50,6 @@ def audit(event, meta=None):
 
 def login_ui():
     st.title("Secure Medical Login")
-
     with st.form("login"):
         u = st.text_input("User ID")
         p = st.text_input("Password", type="password")
@@ -80,13 +79,21 @@ def display_pdf(path):
         unsafe_allow_html=True
     )
 
-# ================= PUBMED =================
+# ================= PUBMED (UPGRADED) =================
 
 def fetch_pubmed(query):
     try:
+        enhanced_query = f"{query} AND 2020:3000[dp]"
+
         r = requests.get(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
-            params={"db": "pubmed", "term": query, "retmode": "json", "retmax": 20},
+            params={
+                "db": "pubmed",
+                "term": enhanced_query,
+                "retmode": "json",
+                "retmax": 20,
+                "sort": "pub+date"
+            },
             timeout=15
         )
         return r.json()["esearchresult"]["idlist"]
@@ -127,12 +134,10 @@ model = load_model()
 def semantic_rank(query, papers, top_k=8):
     if not papers:
         return []
-
     texts = [p["abstract"] for p in papers] + [query]
     emb = model.encode(texts)
     scores = np.dot(emb[:-1], emb[-1])
     ranked = sorted(zip(papers, scores), key=lambda x: x[1], reverse=True)
-
     return [p for p, _ in ranked[:top_k]]
 
 # ================= UNIVERSAL MEDICAL INTELLIGENCE =================
@@ -153,11 +158,11 @@ def generate_clinical_answer(query):
     return f"""
 ### 📌 Clinical Research Answer
 
-Current biomedical research indicates that research into {topic} is actively progressing across laboratory studies and clinical trials.
+Current biomedical research indicates that **{topic}** is being actively investigated across modern clinical studies.
 
-Recent investigations focus on understanding disease mechanisms, evaluating molecular targets, monitoring safety and efficacy outcomes, and assessing real-world clinical effectiveness.
+Researchers are evaluating biological mechanisms, therapeutic strategies, safety profiles, and real-world outcomes.
 
-Overall, findings suggest promising advances, though large-scale trials and long-term outcome studies are still ongoing before definitive conclusions can be established.
+Overall evidence shows meaningful progress, though long-term validation and large-scale trials are still ongoing.
 """
 
 def generate_ai_themes(papers):
