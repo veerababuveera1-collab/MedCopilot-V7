@@ -24,7 +24,7 @@ USERS_DB = os.path.join(BASE, "users.json")
 os.makedirs(PDF_FOLDER, exist_ok=True)
 
 # ============================================================
-# USER DB
+# USER DATABASE
 # ============================================================
 
 if not os.path.exists(USERS_DB):
@@ -42,7 +42,7 @@ if "logged_in" not in st.session_state:
     st.session_state.username = None
 
 # ============================================================
-# AUDIT
+# AUDIT LOGGING
 # ============================================================
 
 def audit(event, meta=None):
@@ -101,7 +101,7 @@ def fetch_pubmed(query):
     try:
         r = requests.get(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
-            params={"db": "pubmed", "term": query, "retmode": "json", "retmax": 15},
+            params={"db": "pubmed", "term": query, "retmode": "json", "retmax": 20},
             timeout=15
         )
         return r.json()["esearchresult"]["idlist"]
@@ -133,7 +133,7 @@ def fetch_pubmed_details(pmids):
     return papers
 
 # ============================================================
-# HYBRID AI MODEL
+# HYBRID SEMANTIC AI
 # ============================================================
 
 @st.cache_resource
@@ -147,19 +147,18 @@ def semantic_rank(query, papers, top_k=8):
         return []
 
     texts = [p["abstract"] for p in papers] + [query]
-    embeddings = model.encode(texts)
+    emb = model.encode(texts)
 
-    paper_vecs = embeddings[:-1]
-    query_vec = embeddings[-1]
+    paper_vecs = emb[:-1]
+    query_vec = emb[-1]
 
     scores = np.dot(paper_vecs, query_vec)
-
     ranked = sorted(zip(papers, scores), key=lambda x: x[1], reverse=True)
 
     return [p for p, _ in ranked[:top_k]]
 
 # ============================================================
-# CLINICAL AI REASONING
+# CLINICAL REASONING ENGINE
 # ============================================================
 
 def generate_ai_summary(query, papers):
@@ -170,47 +169,39 @@ def generate_ai_summary(query, papers):
 
     concept_groups = {
 
-"Pathology & Morphology": {
-"biopsy","histopathology","microscopy","tissue sample","fibrosis",
-"necrosis","cellular changes","morphological evaluation"
-},
+        "Pathology & Morphology": {
+            "biopsy","histopathology","microscopy","fibrosis","necrosis","tissue"
+        },
 
-"Laboratory & Biomarkers": {
-"biomarker","serum","blood marker","troponin","crp","d-dimer",
-"creatinine","alt","ast","bun","hemoglobin"
-},
+        "Laboratory & Biomarkers": {
+            "biomarker","troponin","crp","d-dimer","creatinine","hemoglobin"
+        },
 
-"Imaging Diagnostics": {
-"ct","mri","ultrasound","echocardiography","pet scan",
-"radiology","imaging study"
-},
+        "Imaging Diagnostics": {
+            "ct","mri","ultrasound","echocardiography","radiology"
+        },
 
-"Genomics & Molecular Medicine": {
-"pcr","sequencing","genomic","mutation","multi-omics",
-"gene expression","molecular profiling"
-},
+        "Genomics & Molecular Medicine": {
+            "pcr","sequencing","genomic","mutation","multi-omics"
+        },
 
-"Pharmacology & Drug Safety": {
-"drug interaction","metabolism","anticoagulant","ssri",
-"blood thinner","toxicity","side effect",
-"cyp enzyme","dose adjustment"
-},
+        "Pharmacology & Drug Safety": {
+            "drug interaction","anticoagulant","ssri","metabolism",
+            "toxicity","side effect","bleeding risk"
+        },
 
-"Clinical Risk & Outcomes": {
-"mortality","prognosis","risk factor",
-"survival rate","complication","clinical outcome"
-},
+        "Clinical Risk & Outcomes": {
+            "mortality","prognosis","risk factor","complication","survival"
+        },
 
-"Computational & AI Medicine": {
-"artificial intelligence","machine learning","predictive model",
-"algorithm","deep learning","risk model"
-},
+        "Computational & AI Medicine": {
+            "artificial intelligence","machine learning","predictive model"
+        },
 
-"Therapeutic Response": {
-"treatment response","drug efficacy","resistance",
-"clinical improvement","disease progression"
-}
-}
+        "Therapeutic Response": {
+            "treatment response","drug efficacy","resistance","improvement"
+        }
+    }
 
     lines = [
         "### 🧠 AI-Synthesized Clinical Summary",
@@ -220,12 +211,13 @@ def generate_ai_summary(query, papers):
     ]
 
     found = False
-    for group, keys in groups.items():
+
+    for group, keys in concept_groups.items():
         hits = [k for k in keys if k in combined]
         if hits:
             found = True
             lines.append(f"🧪 **{group}**")
-            for h in hits:
+            for h in sorted(set(hits)):
                 lines.append(f"- {h.capitalize()}-based clinical applications")
             lines.append("")
 
@@ -237,7 +229,7 @@ def generate_ai_summary(query, papers):
     return "\n".join(lines)
 
 # ============================================================
-# UI PAPERS
+# PAPER UI
 # ============================================================
 
 def show_papers(papers):
@@ -271,14 +263,13 @@ if module == "📁 Evidence Library":
     if files:
         for f in files:
             open(os.path.join(PDF_FOLDER, f.name), "wb").write(f.read())
-        st.success("Uploaded successfully")
+        st.success("Uploaded")
 
     pdfs = os.listdir(PDF_FOLDER)
     if pdfs:
-        selected = st.selectbox("View PDF", pdfs)
-        display_pdf(os.path.join(PDF_FOLDER, selected))
+        display_pdf(os.path.join(PDF_FOLDER, pdfs[0]))
     else:
-        st.info("No PDFs uploaded")
+        st.info("No PDFs yet")
 
 # ------------------------------------------------------------
 
@@ -307,7 +298,7 @@ if module == "🔬 Research Copilot":
 # ------------------------------------------------------------
 
 if module == "📊 Dashboard":
-    st.metric("Total Evidence PDFs", len(os.listdir(PDF_FOLDER)))
+    st.metric("Evidence PDFs", len(os.listdir(PDF_FOLDER)))
     st.metric("Total Queries", len(json.load(open(AUDIT_LOG))) if os.path.exists(AUDIT_LOG) else 0)
 
 # ------------------------------------------------------------
@@ -316,11 +307,10 @@ if module == "🕒 Audit":
     if os.path.exists(AUDIT_LOG):
         st.dataframe(pd.DataFrame(json.load(open(AUDIT_LOG))), use_container_width=True)
     else:
-        st.info("No audit logs yet")
+        st.info("No audit logs")
 
 # ============================================================
 # FOOTER
 # ============================================================
 
 st.caption("ĀROGYABODHA AI — Hybrid Medical Intelligence OS")
-
