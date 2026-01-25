@@ -1,6 +1,6 @@
 # ============================================================
 # ĀROGYABODHA AI — Hybrid Medical Intelligence OS
-# Semantic AI + Evidence-Based Clinical Reasoning CDSS
+# Semantic AI + LLM Clinical Reasoning CDSS
 # ============================================================
 
 import streamlit as st
@@ -8,17 +8,23 @@ import os, json, datetime, requests, re, base64
 import pandas as pd
 import numpy as np
 from sentence_transformers import SentenceTransformer
+from openai import OpenAI
 
 # ================= CONFIG =================
 
 st.set_page_config("ĀROGYABODHA AI", "🧠", layout="wide")
-st.info("ℹ️ Clinical Decision Support System — Research only (Not for diagnosis or treatment)")
+st.info("ℹ️ Clinical Decision Support System — Research only")
 
 BASE = os.getcwd()
 PDF_FOLDER = os.path.join(BASE, "medical_library")
 AUDIT_LOG = os.path.join(BASE, "audit_log.json")
 USERS_DB = os.path.join(BASE, "users.json")
+
 os.makedirs(PDF_FOLDER, exist_ok=True)
+
+# ================= OPENAI =================
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ================= USER DB =================
 
@@ -50,6 +56,7 @@ def audit(event, meta=None):
 
 def login_ui():
     st.title("Secure Medical Login")
+
     with st.form("login"):
         u = st.text_input("User ID")
         p = st.text_input("Password", type="password")
@@ -79,21 +86,13 @@ def display_pdf(path):
         unsafe_allow_html=True
     )
 
-# ================= PUBMED (UPGRADED) =================
+# ================= PUBMED =================
 
 def fetch_pubmed(query):
     try:
-        enhanced_query = f"{query} AND 2020:3000[dp]"
-
         r = requests.get(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
-            params={
-                "db": "pubmed",
-                "term": enhanced_query,
-                "retmode": "json",
-                "retmax": 20,
-                "sort": "pub+date"
-            },
+            params={"db": "pubmed", "term": query, "retmode": "json", "retmax": 25},
             timeout=15
         )
         return r.json()["esearchresult"]["idlist"]
@@ -131,61 +130,50 @@ def load_model():
 
 model = load_model()
 
-def semantic_rank(query, papers, top_k=8):
+def semantic_rank(query, papers, top_k=10):
     if not papers:
         return []
+
     texts = [p["abstract"] for p in papers] + [query]
     emb = model.encode(texts)
     scores = np.dot(emb[:-1], emb[-1])
     ranked = sorted(zip(papers, scores), key=lambda x: x[1], reverse=True)
     return [p for p, _ in ranked[:top_k]]
 
-# ================= UNIVERSAL MEDICAL INTELLIGENCE =================
+# ================= LLM CLINICAL REASONING =================
 
-CONCEPT_GROUPS = {
-    "Molecular & Genomics": {"pcr","sequencing","genomic","mutation","multi-omics"},
-    "Immunology & Infection": {"vaccine","antibody","immune response","viral infection"},
-    "Laboratory & Biomarkers": {"biomarker","troponin","crp","d-dimer","creatinine"},
-    "Imaging & Radiology": {"ct","mri","ultrasound","x-ray","pet scan"},
-    "Clinical Trials & Evidence": {"clinical trial","efficacy","safety","phase ii","phase iii"},
-    "Clinical Outcomes & Risk": {"mortality","survival","complication","hospitalization"},
-    "Pharmacology & Therapeutics": {"drug interaction","toxicity","dose","anticoagulant"},
-    "AI & Predictive Medicine": {"artificial intelligence","machine learning","predictive model"}
-}
+def llm_reasoning(query, papers):
+    context = "\n\n".join(p["abstract"][:1200] for p in papers)
 
-def generate_clinical_answer(query):
-    topic = query.rstrip("?").lower()
-    return f"""
-### 📌 Clinical Research Answer
+    prompt = f"""
+You are a clinical research assistant.
 
-Current biomedical research indicates that **{topic}** is being actively investigated across modern clinical studies.
+Use ONLY the evidence below to answer medically.
 
-Researchers are evaluating biological mechanisms, therapeutic strategies, safety profiles, and real-world outcomes.
+QUESTION:
+{query}
 
-Overall evidence shows meaningful progress, though long-term validation and large-scale trials are still ongoing.
+EVIDENCE:
+{context}
+
+Provide:
+- Current research status
+- Guideline insights if present
+- Clinical implications
+- Safety notes
+
+No diagnosis or treatment commands.
 """
 
-def generate_ai_themes(papers):
-    combined = " ".join(p["abstract"].lower() for p in papers)
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2
+    )
 
-    lines = ["### 🧠 Evidence Themes Identified", ""]
-    found = False
+    return resp.choices[0].message.content
 
-    for group, keys in CONCEPT_GROUPS.items():
-        hits = [k for k in keys if k in combined]
-        if hits:
-            found = True
-            lines.append(f"🧪 **{group}**")
-            for h in sorted(set(hits)):
-                lines.append(f"- {h.capitalize()}-based clinical research")
-            lines.append("")
-
-    if not found:
-        lines.append("No dominant evidence themes identified.")
-
-    return "\n".join(lines)
-
-# ================= UI =================
+# ================= UI HELPERS =================
 
 def show_papers(papers):
     st.subheader("📚 Papers Found")
@@ -197,9 +185,11 @@ def show_papers(papers):
 # ================= SIDEBAR =================
 
 st.sidebar.markdown(f"👨‍⚕️ {st.session_state.username}")
-module = st.sidebar.radio("Medical Intelligence Center", [
-    "📁 Evidence Library","🔬 Research Copilot","📊 Dashboard","🕒 Audit"
-])
+
+module = st.sidebar.radio(
+    "Medical Intelligence Center",
+    ["📁 Evidence Library", "🔬 Research Copilot", "📊 Dashboard", "🕒 Audit"]
+)
 
 # ================= MODULES =================
 
@@ -232,8 +222,10 @@ if module == "🔬 Research Copilot":
         raw = fetch_pubmed_details(ids)
         papers = semantic_rank(query, raw)
 
-        st.markdown(generate_clinical_answer(query))
-        st.markdown(generate_ai_themes(papers))
+        st.subheader("📌 Clinical Research Answer")
+        answer = llm_reasoning(query, papers)
+        st.markdown(answer)
+
         show_papers(papers)
 
         st.subheader("Local Evidence PDFs")
