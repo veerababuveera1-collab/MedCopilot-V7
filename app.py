@@ -168,12 +168,49 @@ def generate_ai_summary(query, papers):
 
     combined = " ".join(p["abstract"].lower() for p in papers)
 
-    groups = {
-        "Biomarker Diagnostics": {"biomarker", "d-dimer", "troponin", "serum"},
-        "Imaging & Pathology": {"mri", "ct", "biopsy", "histopathology", "imaging"},
-        "AI & Prediction": {"machine learning", "artificial intelligence", "algorithm"},
-        "Genomic & Molecular": {"sequencing", "genomic", "pcr"}
-    }
+    concept_groups = {
+
+"Pathology & Morphology": {
+"biopsy","histopathology","microscopy","tissue sample","fibrosis",
+"necrosis","cellular changes","morphological evaluation"
+},
+
+"Laboratory & Biomarkers": {
+"biomarker","serum","blood marker","troponin","crp","d-dimer",
+"creatinine","alt","ast","bun","hemoglobin"
+},
+
+"Imaging Diagnostics": {
+"ct","mri","ultrasound","echocardiography","pet scan",
+"radiology","imaging study"
+},
+
+"Genomics & Molecular Medicine": {
+"pcr","sequencing","genomic","mutation","multi-omics",
+"gene expression","molecular profiling"
+},
+
+"Pharmacology & Drug Safety": {
+"drug interaction","metabolism","anticoagulant","ssri",
+"blood thinner","toxicity","side effect",
+"cyp enzyme","dose adjustment"
+},
+
+"Clinical Risk & Outcomes": {
+"mortality","prognosis","risk factor",
+"survival rate","complication","clinical outcome"
+},
+
+"Computational & AI Medicine": {
+"artificial intelligence","machine learning","predictive model",
+"algorithm","deep learning","risk model"
+},
+
+"Therapeutic Response": {
+"treatment response","drug efficacy","resistance",
+"clinical improvement","disease progression"
+}
+}
 
     lines = [
         "### 🧠 AI-Synthesized Clinical Summary",
@@ -286,3 +323,4 @@ if module == "🕒 Audit":
 # ============================================================
 
 st.caption("ĀROGYABODHA AI — Hybrid Medical Intelligence OS")
+
