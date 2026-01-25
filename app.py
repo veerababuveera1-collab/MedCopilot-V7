@@ -171,23 +171,51 @@ concept_map = {
 # AI SUMMARY ENGINE
 # ============================================================
 
-def generate_ai_summary(papers):
-    text = " ".join(p["abstract"].lower() for p in papers)
+def generate_ai_summary(query, papers):
+    if not papers:
+        return "Insufficient research evidence found for automated clinical synthesis."
 
-    detected = []
-    for k, v in concept_map.items():
-        if k in text:
-            detected.append(v)
+    combined = " ".join(p["abstract"].lower() for p in papers)
 
-    if not detected:
-        return "No dominant clinical diagnostic concepts detected."
+    concept_groups = {
+        "Biomarker & Laboratory Diagnostics": {
+            "biomarker", "d-dimer", "inflammatory", "serum", "blood marker", "protein marker"
+        },
+        "Computational & Predictive Models": {
+            "predictive model", "risk model", "nomogram", "machine learning", "artificial intelligence", "algorithm"
+        },
+        "Advanced Analytical Techniques": {
+            "multi-omics", "genomic", "sequencing", "computational", "data-driven"
+        }
+    }
 
-    bullets = "\n".join(f"• {x}" for x in sorted(set(detected)))
+    detected = {group: [] for group in concept_groups}
 
-    return f"""
-### 🧠 AI-Synthesized Clinical Summary
+    for group, keywords in concept_groups.items():
+        for k in keywords:
+            if k in combined:
+                detected[group].append(k)
 
-{bullets}
+    summary = f"### 🧠 AI-Synthesized Clinical Summary\n\n"
+    summary += f"**Key diagnostic themes identified from current biomedical literature:**\n\n"
+
+    found_any = False
+
+    for group, hits in detected.items():
+        if hits:
+            found_any = True
+            summary += f"🧪 **{group}**\n"
+            unique_hits = sorted(set(hits))
+            for h in unique_hits:
+                summary += f"- {h.capitalize()}-based clinical applications\n"
+            summary += "\n"
+
+    if not found_any:
+        summary += "No dominant clinical methodologies were identified from current literature.\n"
+
+    summary += "\nℹ️ *Literature-driven research synthesis only.*"
+
+    return summary
 
 ℹ️ Literature-driven research synthesis only.
 """
@@ -272,6 +300,7 @@ if module == "🕒 Audit":
 # ============================================================
 
 st.caption("ĀROGYABODHA AI — Phase-3 Production Medical Intelligence OS")
+
 
 
 
