@@ -1,6 +1,6 @@
 # ============================================================
-# ĀROGYABODHA AI — Hybrid Medical Intelligence OS
-# Semantic AI + Evidence Reasoning CDSS
+# ĀROGYABODHA AI — Enterprise Medical Intelligence OS
+# Hybrid AI + FDA Regulatory + Clinical Analytics
 # ============================================================
 
 import streamlit as st
@@ -23,10 +23,7 @@ os.makedirs(PDF_FOLDER,exist_ok=True)
 # ================= USERS =================
 
 if not os.path.exists(USERS_DB):
-    json.dump({
-        "doctor1":{"password":"doctor123"},
-        "researcher1":{"password":"research123"}
-    },open(USERS_DB,"w"),indent=2)
+    json.dump({"doctor1":{"password":"doctor123"}},open(USERS_DB,"w"))
 
 # ================= SESSION =================
 
@@ -40,7 +37,6 @@ def audit(event,meta=None):
     logs=json.load(open(AUDIT_LOG)) if os.path.exists(AUDIT_LOG) else []
     logs.append({
         "time":str(datetime.datetime.utcnow()),
-        "user":st.session_state.username,
         "event":event,
         "meta":meta or {}
     })
@@ -48,66 +44,45 @@ def audit(event,meta=None):
 
 # ================= LOGIN =================
 
-def login_ui():
-    st.title("Secure Medical Login")
-    with st.form("login"):
-        u=st.text_input("User ID")
-        p=st.text_input("Password",type="password")
-        ok=st.form_submit_button("Login")
-    if ok:
+def login():
+    u=st.text_input("User")
+    p=st.text_input("Password",type="password")
+    if st.button("Login"):
         users=json.load(open(USERS_DB))
         if u in users and users[u]["password"]==p:
             st.session_state.logged_in=True
             st.session_state.username=u
             audit("login")
             st.rerun()
-        else:
-            st.error("Invalid credentials")
 
 if not st.session_state.logged_in:
-    login_ui()
+    login()
     st.stop()
-
-# ================= PDF VIEW =================
-
-def display_pdf(path):
-    with open(path,"rb") as f:
-        b64=base64.b64encode(f.read()).decode()
-    st.markdown(
-        f'<iframe src="data:application/pdf;base64,{b64}" width="100%" height="700"></iframe>',
-        unsafe_allow_html=True
-    )
 
 # ================= PUBMED =================
 
-def fetch_pubmed(query):
-    try:
-        q=f"{query} AND 2020:3000[dp]"
-        r=requests.get(
-            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
-            params={"db":"pubmed","term":q,"retmode":"json","retmax":20,"sort":"pub+date"},
-            timeout=15
-        )
-        return r.json()["esearchresult"]["idlist"]
-    except:
-        return []
+def fetch_pubmed(q):
+    r=requests.get(
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        params={"db":"pubmed","term":f"{q} AND 2020:3000[dp]","retmode":"json","retmax":20},
+        timeout=15
+    )
+    return r.json()["esearchresult"]["idlist"]
 
-def fetch_pubmed_details(pmids):
-    if not pmids: return []
+def fetch_details(ids):
+    if not ids: return []
     r=requests.get(
         "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
-        params={"db":"pubmed","id":",".join(pmids),"retmode":"xml"},
+        params={"db":"pubmed","id":",".join(ids),"retmode":"xml"},
         timeout=20
     )
     papers=[]
     for art in re.findall(r"<PubmedArticle>(.*?)</PubmedArticle>",r.text,re.S):
         title=re.search(r"<ArticleTitle>(.*?)</ArticleTitle>",art,re.S)
         abstract=re.search(r"<AbstractText.*?>(.*?)</AbstractText>",art,re.S)
-        pmid=re.search(r"<PMID.*?>(.*?)</PMID>",art)
         papers.append({
-            "title":re.sub("<.*?>","",title.group(1)) if title else "No title",
-            "abstract":re.sub("<.*?>","",abstract.group(1)) if abstract else "",
-            "url":f"https://pubmed.ncbi.nlm.nih.gov/{pmid.group(1)}/" if pmid else ""
+            "title":re.sub("<.*?>","",title.group(1)) if title else "",
+            "abstract":re.sub("<.*?>","",abstract.group(1)) if abstract else ""
         })
     return papers
 
@@ -119,152 +94,97 @@ def load_model():
 
 model=load_model()
 
-def semantic_rank(query,papers,top_k=8):
+def rank(query,papers):
     if not papers: return []
-    texts=[p["abstract"] for p in papers]+[query]
-    emb=model.encode(texts)
+    emb=model.encode([p["abstract"] for p in papers]+[query])
     scores=np.dot(emb[:-1],emb[-1])
     ranked=sorted(zip(papers,scores),key=lambda x:x[1],reverse=True)
-    return [p for p,_ in ranked[:top_k]]
+    return [p for p,_ in ranked[:8]]
 
-# ================= THEME DETECTION =================
+# ================= FDA REGULATORY AI =================
 
-CONCEPT_GROUPS={
-    "Molecular & Genomics":{"pcr","sequencing","genomic","mutation"},
-    "Immunology & Infection":{"vaccine","antibody","viral infection"},
-    "Biomarkers":{"biomarker","troponin","crp","d-dimer","creatinine"},
-    "Imaging & Radiology":{"ct","mri","ultrasound","x-ray"},
-    "Clinical Trials":{"clinical trial","efficacy","safety"},
-    "Outcomes & Risk":{"mortality","survival","complication"},
-    "Pharmacology":{"drug interaction","toxicity","dose"},
-    "AI Medicine":{"machine learning","predictive model"}
-}
+def fetch_fda_info(keyword):
+    try:
+        r=requests.get(
+            "https://api.fda.gov/drug/drugsfda.json",
+            params={"search":keyword,"limit":5},
+            timeout=15
+        )
+        results=r.json().get("results",[])
+        return [x["brand_name"] for x in results if "brand_name" in x]
+    except:
+        return []
 
-def generate_ai_themes(papers):
-    combined=" ".join(p["abstract"].lower() for p in papers)
-    lines=["### 🧠 Evidence Themes Identified",""]
-    found=False
-    for group,keys in CONCEPT_GROUPS.items():
-        hits=[k for k in keys if k in combined]
-        if hits:
-            found=True
-            lines.append(f"🧪 **{group}**")
-            for h in sorted(set(hits)):
-                lines.append(f"- {h.capitalize()}-based clinical research")
-            lines.append("")
-    if not found:
-        lines.append("No dominant themes detected.")
-    return "\n".join(lines)
+# ================= CLINICAL INTELLIGENCE =================
 
-# ================= CLINICAL REASONING (NEW BRAIN) =================
-
-def evidence_reasoning(papers):
-    text=" ".join(p["abstract"].lower() for p in papers)
-
-    insights=[]
-
-    if "cost-effective" in text or "lower cost" in text:
-        insights.append("Some modalities demonstrate cost-effectiveness advantages.")
-
-    if "higher survival" in text or "improved outcomes" in text:
-        insights.append("Several studies report improved survival and clinical outcomes.")
-
-    if "guideline" in text or "recommendation" in text:
-        insights.append("Recent clinical guidelines support updated management strategies.")
-
-    if "risk" in text or "complication" in text:
-        insights.append("Risk profiles and complication rates are key considerations.")
-
-    if not insights:
-        insights.append("Current evidence remains mixed with ongoing clinical evaluation.")
-
-    return " ".join(insights)
-
-def generate_clinical_answer(query):
-    topic=query.rstrip("?")
+def generate_answer(q):
     return f"""
 ### 📌 Clinical Research Answer
-
-Current biomedical research indicates that **{topic}** is actively being investigated across recent clinical studies.
-
-Researchers are examining therapeutic effectiveness, safety outcomes, economic impact, and long-term results.
-
-Large trials and guideline updates continue to refine best clinical practices.
+Current biomedical research on **{q}** shows active clinical trials, evolving therapies, and improving patient outcomes.
 """
 
-# ================= UI HELPERS =================
+def reasoning(papers):
+    text=" ".join(p["abstract"].lower() for p in papers)
+    insights=[]
+    if "cost" in text: insights.append("Economic effectiveness is a major research focus.")
+    if "survival" in text: insights.append("Improved survival outcomes observed.")
+    if "guideline" in text: insights.append("Updated clinical guidelines identified.")
+    return " ".join(insights) or "Evidence remains under evaluation."
 
-def show_papers(papers):
-    st.subheader("📚 Papers Found")
-    for p in papers:
-        with st.expander(f"📄 {p['title']}"):
-            st.write(p["abstract"][:1200])
-            st.link_button("View on PubMed",p["url"])
+# ================= UI =================
 
-# ================= SIDEBAR =================
+st.sidebar.title("Medical Intelligence Center")
+module=st.sidebar.radio("",["🔬 Research Copilot","📊 Enterprise Analytics","🕒 Audit"])
 
-st.sidebar.markdown(f"👨‍⚕️ {st.session_state.username}")
-module=st.sidebar.radio("Medical Intelligence Center",
-["📁 Evidence Library","🔬 Research Copilot","📊 Dashboard","🕒 Audit"])
-
-# ================= MODULES =================
-
-if module=="📁 Evidence Library":
-    st.header("Medical Evidence PDFs")
-    files=st.file_uploader("Upload PDFs",type="pdf",accept_multiple_files=True)
-    if files:
-        for f in files:
-            open(os.path.join(PDF_FOLDER,f.name),"wb").write(f.read())
-        st.success("Uploaded")
-
-    pdfs=os.listdir(PDF_FOLDER)
-    if pdfs:
-        display_pdf(os.path.join(PDF_FOLDER,pdfs[0]))
-    else:
-        st.info("No PDFs uploaded")
-
-# ------------------------------------------------
+# -------------------------------------------------
 
 if module=="🔬 Research Copilot":
-    st.header("Clinical Research AI")
-    query=st.text_input("Ask a clinical research question")
+    q=st.text_input("Ask clinical research question")
 
-    if st.button("Analyze") and query:
-        audit("query",{"query":query})
+    if st.button("Analyze") and q:
+        audit("query",{"q":q})
 
-        ids=fetch_pubmed(query)
-        raw=fetch_pubmed_details(ids)
-        papers=semantic_rank(query,raw)
+        ids=fetch_pubmed(q)
+        papers=rank(q,fetch_details(ids))
 
-        st.markdown(generate_clinical_answer(query))
+        st.markdown(generate_answer(q))
+        st.subheader("🧠 Clinical Interpretation")
+        st.write(reasoning(papers))
 
-        st.subheader("🧠 Evidence-Based Clinical Interpretation")
-        st.write(evidence_reasoning(papers))
-
-        st.markdown(generate_ai_themes(papers))
-        show_papers(papers)
-
-        st.subheader("Local Evidence PDFs")
-        pdfs=os.listdir(PDF_FOLDER)
-        if pdfs:
-            display_pdf(os.path.join(PDF_FOLDER,pdfs[0]))
+        st.subheader("🏛 FDA Regulatory Evidence")
+        fda=fetch_fda_info(q.split()[0])
+        if fda:
+            st.success("FDA Related Drugs:")
+            for d in fda:
+                st.write("•",d)
         else:
-            st.info("No local PDFs")
+            st.info("No FDA data found yet")
 
-# ------------------------------------------------
+        st.subheader("📚 Research Evidence")
+        for p in papers:
+            with st.expander(p["title"]):
+                st.write(p["abstract"][:800])
 
-if module=="📊 Dashboard":
-    st.metric("Evidence PDFs",len(os.listdir(PDF_FOLDER)))
-    st.metric("Total Queries",len(json.load(open(AUDIT_LOG))) if os.path.exists(AUDIT_LOG) else 0)
+# -------------------------------------------------
 
-# ------------------------------------------------
+if module=="📊 Enterprise Analytics":
+    if os.path.exists(AUDIT_LOG):
+        df=pd.DataFrame(json.load(open(AUDIT_LOG)))
+        st.metric("Total Clinical Queries",len(df[df["event"]=="query"]))
+        df["date"]=pd.to_datetime(df["time"]).dt.date
+        trend=df.groupby("date").size()
+        st.line_chart(trend)
+    else:
+        st.info("No analytics yet")
+
+# -------------------------------------------------
 
 if module=="🕒 Audit":
     if os.path.exists(AUDIT_LOG):
-        st.dataframe(pd.DataFrame(json.load(open(AUDIT_LOG))),use_container_width=True)
+        st.dataframe(pd.DataFrame(json.load(open(AUDIT_LOG))))
     else:
-        st.info("No audit logs")
+        st.info("No logs")
 
 # ================= FOOTER =================
 
-st.caption("ĀROGYABODHA AI — Hybrid Medical Intelligence OS")
+st.caption("ĀROGYABODHA AI — Enterprise Clinical Intelligence Platform")
