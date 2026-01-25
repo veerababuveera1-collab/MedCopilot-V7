@@ -1,12 +1,11 @@
 # ============================================================
-# ĀROGYABODHA AI — Phase-3 PRODUCTION Medical Intelligence OS
+# ĀROGYABODHA AI — Phase-3 Medical Intelligence OS
 # ============================================================
 
 import streamlit as st
 import os, json, datetime, io, requests, re, base64
 import pandas as pd
 from pypdf import PdfReader
-from sentence_transformers import SentenceTransformer
 
 # ============================================================
 # CONFIG
@@ -19,9 +18,8 @@ st.set_page_config(
 )
 
 st.info(
-    "ℹ️ ĀROGYABODHA AI is a Clinical Decision Support System (CDSS). "
-    "It does NOT provide diagnosis or treatment. "
-    "Final decisions must be made by licensed doctors."
+    "ℹ️ Clinical Decision Support System (CDSS). "
+    "Not for diagnosis or treatment."
 )
 
 BASE = os.getcwd()
@@ -32,13 +30,13 @@ USERS_DB = os.path.join(BASE, "users.json")
 os.makedirs(PDF_FOLDER, exist_ok=True)
 
 # ============================================================
-# DATABASE INIT
+# INIT USERS
 # ============================================================
 
 if not os.path.exists(USERS_DB):
     json.dump({
-        "doctor1": {"password": "doctor123", "role": "Doctor"},
-        "researcher1": {"password": "research123", "role": "Researcher"}
+        "doctor1": {"password": "doctor123"},
+        "researcher1": {"password": "research123"}
     }, open(USERS_DB, "w"), indent=2)
 
 # ============================================================
@@ -48,7 +46,6 @@ if not os.path.exists(USERS_DB):
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = None
-    st.session_state.role = None
 
 # ============================================================
 # AUDIT
@@ -69,7 +66,7 @@ def audit(event, meta=None):
 # ============================================================
 
 def login_ui():
-    st.title("ĀROGYABODHA AI — Secure Medical Login")
+    st.title("ĀROGYABODHA AI Login")
 
     with st.form("login"):
         u = st.text_input("User ID")
@@ -81,8 +78,7 @@ def login_ui():
         if u in users and users[u]["password"] == p:
             st.session_state.logged_in = True
             st.session_state.username = u
-            st.session_state.role = users[u]["role"]
-            audit("login", {"user": u})
+            audit("login")
             st.rerun()
         else:
             st.error("Invalid credentials")
@@ -95,17 +91,16 @@ if not st.session_state.logged_in:
 # PDF DISPLAY
 # ============================================================
 
-def display_pdf(path, height=700):
+def display_pdf(path):
     with open(path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
-
     st.markdown(
-        f'<iframe src="data:application/pdf;base64,{b64}" width="100%" height="{height}"></iframe>',
+        f'<iframe src="data:application/pdf;base64,{b64}" width="100%" height="700"></iframe>',
         unsafe_allow_html=True
     )
 
 # ============================================================
-# PUBMED CONNECTORS
+# PUBMED API
 # ============================================================
 
 def fetch_pubmed(query):
@@ -131,6 +126,7 @@ def fetch_pubmed_details(pmids):
         )
 
         papers = []
+
         for art in re.findall(r"<PubmedArticle>(.*?)</PubmedArticle>", r.text, re.S):
             pmid = re.search(r"<PMID.*?>(.*?)</PMID>", art)
             title = re.search(r"<ArticleTitle>(.*?)</ArticleTitle>", art, re.S)
@@ -150,56 +146,64 @@ def fetch_pubmed_details(pmids):
         return []
 
 # ============================================================
-# AI SUMMARY (SAFE SYNTHESIS)
+# DYNAMIC AI SUMMARY
 # ============================================================
 
-def generate_ai_summary(query, papers):
+def generate_ai_summary(papers):
     if not papers:
-        return "No sufficient literature found for synthesis."
+        return "No sufficient evidence found."
+
+    text = " ".join(p["abstract"].lower() for p in papers)
+
+    concept_map = {
+        "bone marrow": "Morphological evaluation using bone marrow biopsy",
+        "blood smear": "Peripheral blood smear examination",
+        "flow cytometry": "Immunophenotyping using flow cytometry",
+        "cytogenetic": "Cytogenetic chromosomal analysis",
+        "molecular": "Molecular diagnostics (PCR, NGS)",
+        "sequencing": "Genomic sequencing technologies",
+        "residual disease": "Minimal residual disease monitoring",
+        "biomarker": "Biomarker-based outcome prediction",
+        "artificial intelligence": "AI-assisted digital pathology",
+        "multi-omics": "Multi-omics profiling"
+    }
+
+    found = [v for k, v in concept_map.items() if k in text]
+
+    if not found:
+        return "No dominant clinical techniques detected."
+
+    bullets = "\n".join(f"• {x}" for x in sorted(set(found)))
 
     return f"""
 ### 🧠 AI-Synthesized Clinical Summary
 
-Based on current PubMed-indexed research related to:
+{bullets}
 
-**{query}**
-
-the evidence consistently highlights:
-
-• Morphological evaluation via blood smear and bone marrow biopsy  
-• Immunophenotyping using flow cytometry  
-• Cytogenetic and molecular diagnostics (PCR, NGS)  
-• Treatment response monitoring through residual disease markers  
-• Increasing use of computational and AI-assisted pathology tools  
-
-> ℹ️ This is a research synthesis only — not diagnostic or treatment guidance.
+ℹ️ Literature-driven synthesis only.
 """
 
 # ============================================================
 # PAPERS UI
 # ============================================================
 
-def display_pubmed_papers(papers):
+def display_papers(papers):
     st.subheader("📚 Papers Found")
 
-    tab_pubmed, = st.tabs([f"PubMed ({len(papers)})"])
+    if not papers:
+        st.info("No papers found.")
+        return
 
-    with tab_pubmed:
-        if papers:
-            for p in papers:
-                with st.expander(f"📄 {p['title']}"):
-                    st.markdown(f"**PMID:** {p['pmid']}")
-                    st.markdown("**Abstract**")
-                    st.write(p["abstract"])
-                    st.link_button("🔗 View on PubMed", p["url"])
-        else:
-            st.info("No PubMed papers found.")
+    for p in papers:
+        with st.expander(f"📄 {p['title']}"):
+            st.write(p["abstract"])
+            st.link_button("View on PubMed", p["url"])
 
 # ============================================================
 # SIDEBAR
 # ============================================================
 
-st.sidebar.markdown(f"👨‍⚕️ **{st.session_state.username}**")
+st.sidebar.markdown(f"👨‍⚕️ {st.session_state.username}")
 
 if st.sidebar.button("Logout"):
     audit("logout")
@@ -208,86 +212,55 @@ if st.sidebar.button("Logout"):
 
 module = st.sidebar.radio("Medical Intelligence Center", [
     "📁 Evidence Library",
-    "🔬 Phase-3 Research Copilot",
-    "📊 Live Intelligence Dashboard",
-    "🕒 Audit & Compliance"
+    "🔬 Research Copilot",
+    "🕒 Audit"
 ])
 
 # ============================================================
 # MODULES
 # ============================================================
 
-# ---------- Evidence Library ----------
-
 if module == "📁 Evidence Library":
-    st.header("📁 Medical Evidence Library")
+    st.header("Evidence Library")
 
     files = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
     if files:
         for f in files:
-            with open(os.path.join(PDF_FOLDER, f.name), "wb") as out:
-                out.write(f.read())
-        st.success("PDFs uploaded")
-
-    st.subheader("📄 View PDFs")
+            open(os.path.join(PDF_FOLDER, f.name), "wb").write(f.read())
+        st.success("Uploaded")
 
     pdfs = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
+
     if pdfs:
         selected = st.selectbox("Select PDF", pdfs)
         display_pdf(os.path.join(PDF_FOLDER, selected))
     else:
-        st.info("No PDFs available")
+        st.info("No PDFs")
 
-# ---------- Research Copilot ----------
+if module == "🔬 Research Copilot":
+    st.header("Clinical Research Assistant")
 
-if module == "🔬 Phase-3 Research Copilot":
-    st.header("🧠 Clinical Research Intelligence Assistant")
+    query = st.text_input("Ask a clinical research question")
 
-    query = st.text_input(
-        "Ask a clinical research question",
-        placeholder="e.g., pathological methods for diagnosing leukemia"
-    )
+    if st.button("Analyze") and query:
+        audit("query", {"q": query})
 
-    if st.button("Analyze Research") and query:
-        audit("research_query", {"query": query})
+        ids = fetch_pubmed(query)
+        papers = fetch_pubmed_details(ids)
 
-        pubmed_ids = fetch_pubmed(query)
-        papers = fetch_pubmed_details(pubmed_ids)
+        st.markdown(generate_ai_summary(papers))
+        display_papers(papers)
 
-        # 🧠 AI Summary
-        st.markdown(generate_ai_summary(query, papers))
-
-        # 📚 Evidence
-        display_pubmed_papers(papers)
-
-        # 📄 Local PDFs
-        st.subheader("📄 Local Hospital Evidence")
-
-        pdfs = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
-        if pdfs:
-            selected_pdf = st.selectbox("Select PDF evidence", pdfs)
-            display_pdf(os.path.join(PDF_FOLDER, selected_pdf))
-        else:
-            st.info("No local PDFs available")
-
-# ---------- Dashboard ----------
-
-if module == "📊 Live Intelligence Dashboard":
-    st.header("📊 Live Medical Intelligence Dashboard")
-    st.metric("Total Evidence PDFs", len(os.listdir(PDF_FOLDER)))
-
-# ---------- Audit ----------
-
-if module == "🕒 Audit & Compliance":
-    st.header("🕒 Audit & Compliance")
+if module == "🕒 Audit":
+    st.header("Audit Log")
 
     if os.path.exists(AUDIT_LOG):
-        st.dataframe(pd.DataFrame(json.load(open(AUDIT_LOG))), use_container_width=True)
+        st.dataframe(pd.DataFrame(json.load(open(AUDIT_LOG))))
     else:
-        st.info("No audit logs")
+        st.info("No logs")
 
 # ============================================================
 # FOOTER
 # ============================================================
 
-st.caption("ĀROGYABODHA AI — Phase-3 PRODUCTION Medical Intelligence OS")
+st.caption("ĀROGYABODHA AI — Phase-3 Medical Intelligence OS")
