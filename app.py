@@ -153,7 +153,6 @@ concept_map = {
     "alt": "Liver enzyme injury assessment",
     "crp": "Inflammatory biomarker evaluation",
 
-    "ecg": "Adjunct cardiac electrical assessment (supportive, not primary diagnostic)"
     "echocardiography": "Ultrasound cardiac imaging",
     "mri": "Magnetic resonance imaging diagnostics",
     "ct scan": "Computed tomography imaging",
@@ -273,5 +272,6 @@ if module == "🕒 Audit":
 # ============================================================
 
 st.caption("ĀROGYABODHA AI — Phase-3 Production Medical Intelligence OS")
+
 
 
