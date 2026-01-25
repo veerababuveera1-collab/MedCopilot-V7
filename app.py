@@ -1,5 +1,6 @@
 # ============================================================
-# ĀROGYABODHA AI — Phase-3 Medical Intelligence OS
+# ĀROGYABODHA AI — Phase-3 PRODUCTION Medical Intelligence OS
+# Multi-Organ Clinical Research Copilot (Dynamic AI)
 # ============================================================
 
 import streamlit as st
@@ -18,7 +19,7 @@ st.set_page_config(
 )
 
 st.info(
-    "ℹ️ Clinical Decision Support System (CDSS). "
+    "ℹ️ Clinical Decision Support System (CDSS) — Research only. "
     "Not for diagnosis or treatment."
 )
 
@@ -30,7 +31,7 @@ USERS_DB = os.path.join(BASE, "users.json")
 os.makedirs(PDF_FOLDER, exist_ok=True)
 
 # ============================================================
-# INIT USERS
+# USER DB
 # ============================================================
 
 if not os.path.exists(USERS_DB):
@@ -45,7 +46,6 @@ if not os.path.exists(USERS_DB):
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
-    st.session_state.username = None
 
 # ============================================================
 # AUDIT
@@ -66,7 +66,7 @@ def audit(event, meta=None):
 # ============================================================
 
 def login_ui():
-    st.title("ĀROGYABODHA AI Login")
+    st.title("Secure Medical Login")
 
     with st.form("login"):
         u = st.text_input("User ID")
@@ -100,7 +100,7 @@ def display_pdf(path):
     )
 
 # ============================================================
-# PUBMED API
+# PUBMED
 # ============================================================
 
 def fetch_pubmed(query):
@@ -118,85 +118,91 @@ def fetch_pubmed_details(pmids):
     if not pmids:
         return []
 
-    try:
-        r = requests.get(
-            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
-            params={"db": "pubmed", "id": ",".join(pmids), "retmode": "xml"},
-            timeout=20
-        )
+    r = requests.get(
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+        params={"db": "pubmed", "id": ",".join(pmids), "retmode": "xml"},
+        timeout=20
+    )
 
-        papers = []
+    papers = []
+    for art in re.findall(r"<PubmedArticle>(.*?)</PubmedArticle>", r.text, re.S):
+        title = re.search(r"<ArticleTitle>(.*?)</ArticleTitle>", art, re.S)
+        abstract = re.search(r"<AbstractText.*?>(.*?)</AbstractText>", art, re.S)
+        pmid = re.search(r"<PMID.*?>(.*?)</PMID>", art)
 
-        for art in re.findall(r"<PubmedArticle>(.*?)</PubmedArticle>", r.text, re.S):
-            pmid = re.search(r"<PMID.*?>(.*?)</PMID>", art)
-            title = re.search(r"<ArticleTitle>(.*?)</ArticleTitle>", art, re.S)
-            abstract = re.search(r"<AbstractText.*?>(.*?)</AbstractText>", art, re.S)
-
-            papers.append({
-                "pmid": pmid.group(1) if pmid else "N/A",
-                "title": re.sub("<.*?>", "", title.group(1)) if title else "No title",
-                "abstract": re.sub("<.*?>", "", abstract.group(1))[:1200]
-                if abstract else "No abstract available",
-                "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid.group(1)}/"
-                if pmid else ""
-            })
-
-        return papers
-    except:
-        return []
+        papers.append({
+            "title": re.sub("<.*?>", "", title.group(1)) if title else "No title",
+            "abstract": re.sub("<.*?>", "", abstract.group(1)) if abstract else "",
+            "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid.group(1)}/" if pmid else ""
+        })
+    return papers
 
 # ============================================================
-# DYNAMIC AI SUMMARY
+# MULTI-ORGAN AI CONCEPT MAP
+# ============================================================
+
+concept_map = {
+
+    "histopathology": "Histopathological tissue examination",
+    "biopsy": "Tissue biopsy morphological evaluation",
+    "fibrosis": "Fibrotic tissue remodeling assessment",
+
+    "troponin": "Cardiac troponin biomarker testing",
+    "bnp": "Heart failure biomarker analysis",
+    "creatinine": "Kidney function biomarker measurement",
+    "alt": "Liver enzyme injury assessment",
+    "crp": "Inflammatory biomarker evaluation",
+
+    "ecg": "Electrical cardiac activity analysis",
+    "echocardiography": "Ultrasound cardiac imaging",
+    "mri": "Magnetic resonance imaging diagnostics",
+    "ct scan": "Computed tomography imaging",
+
+    "pcr": "Molecular disease detection using PCR",
+    "sequencing": "Genomic sequencing diagnostics",
+
+    "artificial intelligence": "AI-assisted diagnostic interpretation",
+    "machine learning": "ML-based clinical prediction",
+
+    "biomarker": "Biomarker-based diagnostic testing",
+    "multi-omics": "Integrated multi-omics profiling"
+}
+
+# ============================================================
+# AI SUMMARY ENGINE
 # ============================================================
 
 def generate_ai_summary(papers):
-    if not papers:
-        return "No sufficient evidence found."
-
     text = " ".join(p["abstract"].lower() for p in papers)
 
-    concept_map = {
-        "bone marrow": "Morphological evaluation using bone marrow biopsy",
-        "blood smear": "Peripheral blood smear examination",
-        "flow cytometry": "Immunophenotyping using flow cytometry",
-        "cytogenetic": "Cytogenetic chromosomal analysis",
-        "molecular": "Molecular diagnostics (PCR, NGS)",
-        "sequencing": "Genomic sequencing technologies",
-        "residual disease": "Minimal residual disease monitoring",
-        "biomarker": "Biomarker-based outcome prediction",
-        "artificial intelligence": "AI-assisted digital pathology",
-        "multi-omics": "Multi-omics profiling"
-    }
+    detected = []
+    for k, v in concept_map.items():
+        if k in text:
+            detected.append(v)
 
-    found = [v for k, v in concept_map.items() if k in text]
+    if not detected:
+        return "No dominant clinical diagnostic concepts detected."
 
-    if not found:
-        return "No dominant clinical techniques detected."
-
-    bullets = "\n".join(f"• {x}" for x in sorted(set(found)))
+    bullets = "\n".join(f"• {x}" for x in sorted(set(detected)))
 
     return f"""
 ### 🧠 AI-Synthesized Clinical Summary
 
 {bullets}
 
-ℹ️ Literature-driven synthesis only.
+ℹ️ Literature-driven research synthesis only.
 """
 
 # ============================================================
-# PAPERS UI
+# UI PAPERS
 # ============================================================
 
-def display_papers(papers):
+def show_papers(papers):
     st.subheader("📚 Papers Found")
-
-    if not papers:
-        st.info("No papers found.")
-        return
 
     for p in papers:
         with st.expander(f"📄 {p['title']}"):
-            st.write(p["abstract"])
+            st.write(p["abstract"][:1200])
             st.link_button("View on PubMed", p["url"])
 
 # ============================================================
@@ -205,14 +211,10 @@ def display_papers(papers):
 
 st.sidebar.markdown(f"👨‍⚕️ {st.session_state.username}")
 
-if st.sidebar.button("Logout"):
-    audit("logout")
-    st.session_state.logged_in = False
-    st.rerun()
-
 module = st.sidebar.radio("Medical Intelligence Center", [
     "📁 Evidence Library",
     "🔬 Research Copilot",
+    "📊 Dashboard",
     "🕒 Audit"
 ])
 
@@ -221,24 +223,23 @@ module = st.sidebar.radio("Medical Intelligence Center", [
 # ============================================================
 
 if module == "📁 Evidence Library":
-    st.header("Evidence Library")
+    st.header("Medical Evidence PDFs")
 
-    files = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
+    files = st.file_uploader("Upload PDFs", type="pdf", accept_multiple_files=True)
     if files:
         for f in files:
             open(os.path.join(PDF_FOLDER, f.name), "wb").write(f.read())
         st.success("Uploaded")
 
-    pdfs = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
-
+    pdfs = os.listdir(PDF_FOLDER)
     if pdfs:
-        selected = st.selectbox("Select PDF", pdfs)
+        selected = st.selectbox("View PDF", pdfs)
         display_pdf(os.path.join(PDF_FOLDER, selected))
     else:
-        st.info("No PDFs")
+        st.info("No PDFs yet")
 
 if module == "🔬 Research Copilot":
-    st.header("Clinical Research Assistant")
+    st.header("Clinical Research AI")
 
     query = st.text_input("Ask a clinical research question")
 
@@ -249,18 +250,26 @@ if module == "🔬 Research Copilot":
         papers = fetch_pubmed_details(ids)
 
         st.markdown(generate_ai_summary(papers))
-        display_papers(papers)
+        show_papers(papers)
+
+        st.subheader("Local Evidence PDFs")
+        pdfs = os.listdir(PDF_FOLDER)
+        if pdfs:
+            display_pdf(os.path.join(PDF_FOLDER, pdfs[0]))
+        else:
+            st.info("No local PDFs")
+
+if module == "📊 Dashboard":
+    st.metric("Evidence PDFs", len(os.listdir(PDF_FOLDER)))
 
 if module == "🕒 Audit":
-    st.header("Audit Log")
-
     if os.path.exists(AUDIT_LOG):
         st.dataframe(pd.DataFrame(json.load(open(AUDIT_LOG))))
     else:
-        st.info("No logs")
+        st.info("No audit logs")
 
 # ============================================================
 # FOOTER
 # ============================================================
 
-st.caption("ĀROGYABODHA AI — Phase-3 Medical Intelligence OS")
+st.caption("ĀROGYABODHA AI — Phase-3 Production Medical Intelligence OS")
